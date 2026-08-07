@@ -1,0 +1,30 @@
+{
+  "name": "wf2-telemetry",
+  "version": "1.0.0",
+  "description": "Wreckfest 2 telemetry capture — records a session to a .jsonl log, from SimHub's API or the game's UDP stream",
+  "main": "lib/index.js",
+  "bin": {
+    "wf2-record": "record.js",
+    "wf2-telemetry-config": "tools/telemetry.js"
+  },
+  "files": [
+    "record.js",
+    "lib/",
+    "tools/",
+    "FORMAT.md"
+  ],
+  "scripts": {
+    "test": "node verify.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "wreckfest",
+    "telemetry",
+    "simhub",
+    "sim-racing"
+  ],
+  "license": "MIT",
+  "private": false
+}

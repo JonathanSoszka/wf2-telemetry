@@ -1,0 +1,1482 @@
+{
+ "enums": {
+  "PlayerStatusFlags": {
+   "values": {
+    "PLAYER_STATUS_CAR_DRIVABLE": 2,
+    "PLAYER_STATUS_PHYSICS_RUNNING": 4,
+    "PLAYER_STATUS_CONTROL_AI": 16,
+    "PLAYER_STATUS_IN_RACE": 1,
+    "PLAYER_STATUS_CONTROL_PLAYER": 8
+   },
+   "underlying": "UInt16"
+  },
+  "ParticipantVisibility": {
+   "values": {
+    "VISIBILITY_LIMITED": 1,
+    "VISIBILITY_FULL": 0
+   },
+   "underlying": "Byte"
+  },
+  "DamageMode": {
+   "values": {
+    "DAMAGE_MODE_OTHER": 255,
+    "DAMAGE_MODE_WRECKER": 0,
+    "DAMAGE_MODE_NORMAL": 1,
+    "DAMAGE_MODE_REALISTIC": 2
+   },
+   "underlying": "Byte"
+  },
+  "MarshalFlags": {
+   "values": {
+    "MARSHAL_FLAGS_GREEN": 1,
+    "MARSHAL_FLAGS_WARNING": 32,
+    "MARSHAL_FLAGS_WHITE": 128,
+    "MARSHAL_FLAGS_LASTLAP": 2,
+    "MARSHAL_FLAGS_MEATBALL": 16,
+    "MARSHAL_FLAGS_FINISH": 4,
+    "MARSHAL_FLAGS_COUNTDOWN2": 32768,
+    "MARSHAL_FLAGS_COUNTDOWN1": 16384,
+    "MARSHAL_FLAGS_BLUE": 64,
+    "MARSHAL_FLAGS_DQ": 8
+   },
+   "underlying": "UInt16"
+  },
+  "DrivelineType": {
+   "values": {
+    "DRIVELINE_TYPE_AWD": 2,
+    "DRIVELINE_TYPE_RWD": 1,
+    "DRIVELINE_TYPE_FWD": 0
+   },
+   "underlying": "Byte"
+  },
+  "SessionStatus": {
+   "values": {
+    "SESSION_STATUS_NONE": 0,
+    "SESSION_STATUS_PRE_RACE": 1,
+    "SESSION_STATUS_ABANDONED": 4,
+    "SESSION_STATUS_COUNTDOWN": 2,
+    "SESSION_STATUS_RACING": 3,
+    "SESSION_STATUS_POST_RACE": 5
+   },
+   "underlying": "Byte"
+  },
+  "AssistGearbox": {
+   "values": {
+    "ASSIST_GEARBOX_AUTO": 0,
+    "ASSIST_GEARBOX_MANUAL_WITH_CLUTCH": 2,
+    "ASSIST_GEARBOX_MANUAL": 1
+   },
+   "underlying": "Byte"
+  },
+  "GameStatusFlags": {
+   "values": {
+    "GAME_STATUS_PAUSED": 1,
+    "GAME_STATUS_MULTIPLAYER_SERVER": 16,
+    "GAME_STATUS_IN_RACE": 32,
+    "GAME_STATUS_MULTIPLAYER_CLIENT": 8,
+    "GAME_STATUS_REPLAY": 2,
+    "GAME_STATUS_SPECTATE": 4
+   },
+   "underlying": "Byte"
+  },
+  "ParticipantTrackStatus": {
+   "values": {
+    "TRACK_STATUS_IN_WRONG_SECTORS": 2,
+    "TRACK_STATUS_WRONG_DIRECTION": 3,
+    "TRACK_STATUS_OUT_OF_SECTORS": 1,
+    "TRACK_STATUS_NORMAL": 0
+   },
+   "underlying": "Byte"
+  },
+  "SurfaceType": {
+   "values": {
+    "SURFACE_TYPE_ROCKS": 13,
+    "SURFACE_TYPE_METAL": 10,
+    "SURFACE_TYPE_SNOW": 16,
+    "SURFACE_TYPE_NOCONTACT": 1,
+    "SURFACE_TYPE_GRAVEL": 4,
+    "SURFACE_TYPE_WATER": 9,
+    "SURFACE_TYPE_SLOWDOWN": 15,
+    "SURFACE_TYPE_DIRT": 5,
+    "SURFACE_TYPE_CONCRETE": 3,
+    "SURFACE_TYPE_DEFAULT": 0,
+    "SURFACE_TYPE_WOOD": 11,
+    "SURFACE_TYPE_RUMBLE_HIFQ": 8,
+    "SURFACE_TYPE_FOLIAGE": 14,
+    "SURFACE_TYPE_RUMBLE_LOFQ": 7,
+    "SURFACE_TYPE_MUD": 6,
+    "SURFACE_TYPE_SAND": 12,
+    "SURFACE_TYPE_TARMAC": 2
+   },
+   "underlying": "Byte"
+  },
+  "ParticipantStatus": {
+   "values": {
+    "STATUS_DNF_WRECKED": 8,
+    "STATUS_RACING": 2,
+    "STATUS_UNUSED": 1,
+    "STATUS_FINISH_ELIMINATED": 4,
+    "STATUS_FINISH_SUCCESS": 3,
+    "STATUS_DNF_DQ": 5,
+    "STATUS_DNF_TIMEOUT": 7,
+    "STATUS_INVALID": 0,
+    "STATUS_POSE": 9,
+    "STATUS_DNF_RETIRED": 6
+   },
+   "underlying": "Byte"
+  },
+  "DamagePart": {
+   "values": {
+    "PART_HALFSHAFT_RR": 28,
+    "PART_TIREHUB_FR": 18,
+    "PART_TIREHUB_RR": 20,
+    "PART_SUSPENSION_RL": 8,
+    "PART_ARMOR_SR": 35,
+    "PART_TIREHUB_RL": 19,
+    "PART_BRAKE_RR": 5,
+    "PART_HALFSHAFT_RL": 27,
+    "PART_BRAKE_RL": 4,
+    "PART_TIRE_FR": 11,
+    "PART_HEADGASKET": 14,
+    "PART_RADIATOR": 15,
+    "PART_ARMOR_SL": 34,
+    "PART_ENDBEARINGS": 24,
+    "PART_ARMOR_RL": 32,
+    "PART_ARMOR_FL": 30,
+    "PART_MISFIRE": 36,
+    "PART_OIL": 23,
+    "PART_TIRE_RR": 13,
+    "PART_SUSPENSION_RR": 9,
+    "PART_ENGINE": 0,
+    "PART_BRAKE_FL": 2,
+    "PART_RADIATORLEAK": 29,
+    "PART_COUNT": 37,
+    "PART_GEARBOX": 1,
+    "PART_COOLANT": 22,
+    "PART_PISTONS": 16,
+    "PART_SUSPENSION_FL": 6,
+    "PART_ARMOR_FR": 31,
+    "PART_SUSPENSION_FR": 7,
+    "PART_OILPAN": 21,
+    "PART_HALFSHAFT_FL": 25,
+    "PART_TIREHUB_FL": 17,
+    "PART_HALFSHAFT_FR": 26,
+    "PART_ARMOR_RR": 33,
+    "PART_TIRE_FL": 10,
+    "PART_TIRE_RL": 12,
+    "PART_BRAKE_FR": 3
+   },
+   "underlying": "Byte"
+  },
+  "DamageState": {
+   "values": {
+    "STATE_DAMAGED3": 3,
+    "STATE_DAMAGED1": 1,
+    "STATE_TERMINAL": 4,
+    "STATE_DAMAGED2": 2,
+    "STATE_OK": 0
+   },
+   "underlying": "Byte"
+  },
+  "GameMode": {
+   "values": {
+    "GAME_MODE_LAST_MAN_STANDING": 2,
+    "GAME_MODE_DEATHMATCH": 1,
+    "GAME_MODE_BANGER": 0,
+    "GAME_MODE_OTHER": 255
+   },
+   "underlying": "Byte"
+  },
+  "EngineFlags": {
+   "values": {
+    "ENGINE_FLAGS_MISFIRING": 4,
+    "ENGINE_FLAGS_STARTING": 2,
+    "ENGINE_FLAGS_DANGER_TO_MANIFOLD": 128,
+    "ENGINE_FLAGS_RUNNING": 1
+   },
+   "underlying": "Byte"
+  },
+  "AssistLevel": {
+   "values": {
+    "ASSIST_LEVEL_FULL": 2,
+    "ASSIST_LEVEL_OFF": 0,
+    "ASSIST_LEVEL_HALF": 1
+   },
+   "underlying": "Byte"
+  },
+  "AxleLocation": {
+   "values": {
+    "AXLE_LOCATION_COUNT": 2,
+    "AXLE_LOCATION_REAR": 1,
+    "AXLE_LOCATION_FRONT": 0
+   },
+   "underlying": "Byte"
+  },
+  "InputFlags": {
+   "values": {
+    "INPUT_FLAGS_FFB_ENABLED": 1
+   },
+   "underlying": "Byte"
+  },
+  "AssistFlags": {
+   "values": {
+    "ASSIST_FLAGS_ESC_ACTIVE": 4,
+    "ASSIST_FLAGS_TCS_ACTIVE": 2,
+    "ASSIST_FLAGS_ABS_ACTIVE": 1
+   },
+   "underlying": "Byte"
+  },
+  "PacketType": {
+   "values": {
+    "PACKET_TYPE_PARTICIPANTS_LEADERBOARD": 1,
+    "PACKET_TYPE_PARTICIPANTS_TIMING_SECTORS": 3,
+    "PACKET_TYPE_MAIN": 0,
+    "PACKET_TYPE_PARTICIPANTS_MOTION": 4,
+    "PACKET_TYPE_PARTICIPANTS_INFO": 5,
+    "PACKET_TYPE_PARTICIPANTS_DAMAGE": 6,
+    "PACKET_TYPE_PARTICIPANTS_TIMING": 2
+   },
+   "underlying": "Byte"
+  },
+  "TireLocation": {
+   "values": {
+    "TIRE_LOCATION_COUNT": 4,
+    "TIRE_LOCATION_RR": 3,
+    "TIRE_LOCATION_FL": 0,
+    "TIRE_LOCATION_FR": 1,
+    "TIRE_LOCATION_RL": 2
+   },
+   "underlying": "Byte"
+  }
+ },
+ "structs": {
+  "PacketParticipantsTimingSectors": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "header",
+     "type": "PacketHeader"
+    },
+    {
+     "offset": 14,
+     "name": "participantVisibility",
+     "type": "ParticipantVisibility"
+    },
+    {
+     "type": "ParticipantTimingSectors[]",
+     "arraySubType": "0",
+     "name": "participantsTimingSectors",
+     "sizeConst": 36,
+     "offset": 15,
+     "unmanagedType": "30"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 64,
+     "offset": 1311,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "ParticipantTimingSectors": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "sectorTimeCurrentLap1",
+     "type": "UInt32"
+    },
+    {
+     "offset": 4,
+     "name": "sectorTimeCurrentLap2",
+     "type": "UInt32"
+    },
+    {
+     "offset": 8,
+     "name": "sectorTimeLastLap1",
+     "type": "UInt32"
+    },
+    {
+     "offset": 12,
+     "name": "sectorTimeLastLap2",
+     "type": "UInt32"
+    },
+    {
+     "offset": 16,
+     "name": "sectorTimeBestLap1",
+     "type": "UInt32"
+    },
+    {
+     "offset": 20,
+     "name": "sectorTimeBestLap2",
+     "type": "UInt32"
+    },
+    {
+     "offset": 24,
+     "name": "sectorTimeBest1",
+     "type": "UInt32"
+    },
+    {
+     "offset": 28,
+     "name": "sectorTimeBest2",
+     "type": "UInt32"
+    },
+    {
+     "offset": 32,
+     "name": "sectorTimeBest3",
+     "type": "UInt32"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "PacketHeader": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "signature",
+     "type": "UInt32"
+    },
+    {
+     "offset": 4,
+     "name": "packetType",
+     "type": "PacketType"
+    },
+    {
+     "offset": 5,
+     "name": "statusFlags",
+     "type": "GameStatusFlags"
+    },
+    {
+     "offset": 6,
+     "name": "sessionTime",
+     "type": "Int32"
+    },
+    {
+     "offset": 10,
+     "name": "raceTime",
+     "type": "Int32"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "PacketMain": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "header",
+     "type": "PacketHeader"
+    },
+    {
+     "offset": 14,
+     "name": "marshalFlagsPlayer",
+     "type": "MarshalFlags"
+    },
+    {
+     "offset": 16,
+     "name": "participantPlayerLeaderboard",
+     "type": "ParticipantLeaderboard"
+    },
+    {
+     "offset": 48,
+     "name": "participantPlayerTiming",
+     "type": "ParticipantTiming"
+    },
+    {
+     "offset": 80,
+     "name": "participantPlayerTimingSectors",
+     "type": "ParticipantTimingSectors"
+    },
+    {
+     "offset": 116,
+     "name": "participantPlayerInfo",
+     "type": "ParticipantInfo"
+    },
+    {
+     "offset": 329,
+     "name": "participantPlayerDamage",
+     "type": "ParticipantDamage"
+    },
+    {
+     "offset": 350,
+     "name": "carPlayer",
+     "type": "CarFull"
+    },
+    {
+     "offset": 882,
+     "name": "session",
+     "type": "Session"
+    },
+    {
+     "offset": 1090,
+     "name": "playerStatusFlags",
+     "type": "PlayerStatusFlags"
+    },
+    {
+     "offset": 1092,
+     "name": "inputExtended",
+     "type": "InputExtended"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 106,
+     "offset": 1112,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "InputExtended": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "flags",
+     "type": "InputFlags"
+    },
+    {
+     "offset": 1,
+     "name": "ffbForce",
+     "type": "Single"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 15,
+     "offset": 5,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "CarDriveline": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "type",
+     "type": "DrivelineType"
+    },
+    {
+     "offset": 1,
+     "name": "gear",
+     "type": "Byte"
+    },
+    {
+     "offset": 2,
+     "name": "gearMax",
+     "type": "Byte"
+    },
+    {
+     "offset": 3,
+     "name": "speed",
+     "type": "Single"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 17,
+     "offset": 7,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "Session": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "trackId",
+     "sizeConst": 64,
+     "offset": 0,
+     "unmanagedType": "30"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "trackName",
+     "sizeConst": 96,
+     "offset": 64,
+     "unmanagedType": "30"
+    },
+    {
+     "offset": 160,
+     "name": "trackLength",
+     "type": "Single"
+    },
+    {
+     "offset": 164,
+     "name": "laps",
+     "type": "Int16"
+    },
+    {
+     "offset": 166,
+     "name": "eventLength",
+     "type": "Int16"
+    },
+    {
+     "offset": 168,
+     "name": "gridSize",
+     "type": "Byte"
+    },
+    {
+     "offset": 169,
+     "name": "gridSizeRemaining",
+     "type": "Byte"
+    },
+    {
+     "offset": 170,
+     "name": "sectorCount",
+     "type": "Byte"
+    },
+    {
+     "offset": 171,
+     "name": "sectorFract1",
+     "type": "Single"
+    },
+    {
+     "offset": 175,
+     "name": "sectorFract2",
+     "type": "Single"
+    },
+    {
+     "offset": 179,
+     "name": "gameMode",
+     "type": "GameMode"
+    },
+    {
+     "offset": 180,
+     "name": "damageMode",
+     "type": "DamageMode"
+    },
+    {
+     "offset": 181,
+     "name": "status",
+     "type": "SessionStatus"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 26,
+     "offset": 182,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "CarAssists": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "flags",
+     "type": "AssistFlags"
+    },
+    {
+     "offset": 1,
+     "name": "assistGearbox",
+     "type": "AssistGearbox"
+    },
+    {
+     "offset": 2,
+     "name": "levelAbs",
+     "type": "AssistLevel"
+    },
+    {
+     "offset": 3,
+     "name": "levelTcs",
+     "type": "AssistLevel"
+    },
+    {
+     "offset": 4,
+     "name": "levelEsc",
+     "type": "AssistLevel"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 3,
+     "offset": 5,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "PacketParticipantsInfo": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "header",
+     "type": "PacketHeader"
+    },
+    {
+     "offset": 14,
+     "name": "participantVisibility",
+     "type": "ParticipantVisibility"
+    },
+    {
+     "type": "ParticipantInfo[]",
+     "arraySubType": "0",
+     "name": "participantsInfo",
+     "sizeConst": 36,
+     "offset": 15,
+     "unmanagedType": "30"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 512,
+     "offset": 7683,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "ParticipantTiming": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "lapTimeCurrent",
+     "type": "UInt32"
+    },
+    {
+     "offset": 4,
+     "name": "lapTimePenaltyCurrent",
+     "type": "UInt32"
+    },
+    {
+     "offset": 8,
+     "name": "lapTimeLast",
+     "type": "UInt32"
+    },
+    {
+     "offset": 12,
+     "name": "lapTimeBest",
+     "type": "UInt32"
+    },
+    {
+     "offset": 16,
+     "name": "lapBest",
+     "type": "Byte"
+    },
+    {
+     "offset": 17,
+     "name": "deltaAhead",
+     "type": "Int32"
+    },
+    {
+     "offset": 21,
+     "name": "deltaBehind",
+     "type": "Int32"
+    },
+    {
+     "offset": 25,
+     "name": "lapProgress",
+     "type": "Single"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 3,
+     "offset": 29,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "CarEngine": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "flags",
+     "type": "EngineFlags"
+    },
+    {
+     "offset": 1,
+     "name": "rpm",
+     "type": "Int32"
+    },
+    {
+     "offset": 5,
+     "name": "rpmMax",
+     "type": "Int32"
+    },
+    {
+     "offset": 9,
+     "name": "rpmRedline",
+     "type": "Int32"
+    },
+    {
+     "offset": 13,
+     "name": "rpmIdle",
+     "type": "Int32"
+    },
+    {
+     "offset": 17,
+     "name": "torque",
+     "type": "Single"
+    },
+    {
+     "offset": 21,
+     "name": "power",
+     "type": "Single"
+    },
+    {
+     "offset": 25,
+     "name": "tempBlock",
+     "type": "Single"
+    },
+    {
+     "offset": 29,
+     "name": "tempWater",
+     "type": "Single"
+    },
+    {
+     "offset": 33,
+     "name": "pressureManifold",
+     "type": "Single"
+    },
+    {
+     "offset": 37,
+     "name": "pressureOil",
+     "type": "Single"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 15,
+     "offset": 41,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "CarTire": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "rps",
+     "type": "Single"
+    },
+    {
+     "offset": 4,
+     "name": "camber",
+     "type": "Single"
+    },
+    {
+     "offset": 8,
+     "name": "slipRatio",
+     "type": "Single"
+    },
+    {
+     "offset": 12,
+     "name": "slipAngle",
+     "type": "Single"
+    },
+    {
+     "offset": 16,
+     "name": "radiusUnloaded",
+     "type": "Single"
+    },
+    {
+     "offset": 20,
+     "name": "loadVertical",
+     "type": "Single"
+    },
+    {
+     "offset": 24,
+     "name": "forceLat",
+     "type": "Single"
+    },
+    {
+     "offset": 28,
+     "name": "forceLong",
+     "type": "Single"
+    },
+    {
+     "offset": 32,
+     "name": "temperatureInner",
+     "type": "Single"
+    },
+    {
+     "offset": 36,
+     "name": "temperatureTread",
+     "type": "Single"
+    },
+    {
+     "offset": 40,
+     "name": "suspensionVelocity",
+     "type": "Single"
+    },
+    {
+     "offset": 44,
+     "name": "suspensionDisplacement",
+     "type": "Single"
+    },
+    {
+     "offset": 48,
+     "name": "suspensionDispNorm",
+     "type": "Single"
+    },
+    {
+     "offset": 52,
+     "name": "positionVertical",
+     "type": "Single"
+    },
+    {
+     "offset": 56,
+     "name": "surfaceType",
+     "type": "SurfaceType"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 15,
+     "offset": 57,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "PacketParticipantsTiming": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "header",
+     "type": "PacketHeader"
+    },
+    {
+     "offset": 14,
+     "name": "participantVisibility",
+     "type": "ParticipantVisibility"
+    },
+    {
+     "type": "ParticipantTiming[]",
+     "arraySubType": "0",
+     "name": "participantsTiming",
+     "sizeConst": 36,
+     "offset": 15,
+     "unmanagedType": "30"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 64,
+     "offset": 1167,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "CarInput": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "throttle",
+     "type": "Single"
+    },
+    {
+     "offset": 4,
+     "name": "brake",
+     "type": "Single"
+    },
+    {
+     "offset": 8,
+     "name": "clutch",
+     "type": "Single"
+    },
+    {
+     "offset": 12,
+     "name": "handbrake",
+     "type": "Single"
+    },
+    {
+     "offset": 16,
+     "name": "steering",
+     "type": "Single"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "PacketParticipantsDamage": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "header",
+     "type": "PacketHeader"
+    },
+    {
+     "offset": 14,
+     "name": "participantVisibility",
+     "type": "ParticipantVisibility"
+    },
+    {
+     "type": "ParticipantDamage[]",
+     "arraySubType": "0",
+     "name": "participantsDamage",
+     "sizeConst": 36,
+     "offset": 15,
+     "unmanagedType": "30"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 256,
+     "offset": 771,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "CarMotionOrientation": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "positionX",
+     "type": "Single"
+    },
+    {
+     "offset": 4,
+     "name": "positionY",
+     "type": "Single"
+    },
+    {
+     "offset": 8,
+     "name": "positionZ",
+     "type": "Single"
+    },
+    {
+     "offset": 12,
+     "name": "orientationQuaternionX",
+     "type": "Single"
+    },
+    {
+     "offset": 16,
+     "name": "orientationQuaternionY",
+     "type": "Single"
+    },
+    {
+     "offset": 20,
+     "name": "orientationQuaternionZ",
+     "type": "Single"
+    },
+    {
+     "offset": 24,
+     "name": "orientationQuaternionW",
+     "type": "Single"
+    },
+    {
+     "offset": 28,
+     "name": "extentsX",
+     "type": "UInt16"
+    },
+    {
+     "offset": 30,
+     "name": "extentsY",
+     "type": "UInt16"
+    },
+    {
+     "offset": 32,
+     "name": "extentsZ",
+     "type": "UInt16"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "CarChassis": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "type": "Single[]",
+     "arraySubType": "0",
+     "name": "trackWidth",
+     "sizeConst": 2,
+     "offset": 0,
+     "unmanagedType": "30"
+    },
+    {
+     "offset": 8,
+     "name": "wheelBase",
+     "type": "Single"
+    },
+    {
+     "offset": 12,
+     "name": "steeringWheelLockToLock",
+     "type": "Int32"
+    },
+    {
+     "offset": 16,
+     "name": "steeringLock",
+     "type": "Single"
+    },
+    {
+     "type": "Single[]",
+     "arraySubType": "0",
+     "name": "cornerWeights",
+     "sizeConst": 4,
+     "offset": 20,
+     "unmanagedType": "30"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 16,
+     "offset": 36,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "PacketParticipantsMotion": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "header",
+     "type": "PacketHeader"
+    },
+    {
+     "offset": 14,
+     "name": "participantVisibility",
+     "type": "ParticipantVisibility"
+    },
+    {
+     "type": "ParticipantMotion[]",
+     "arraySubType": "0",
+     "name": "participantsMotion",
+     "sizeConst": 36,
+     "offset": 15,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "ParticipantDamage": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "damageStates",
+     "sizeConst": 21,
+     "offset": 0,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "CarMotionVelocity": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "velocityLocalX",
+     "type": "Single"
+    },
+    {
+     "offset": 4,
+     "name": "velocityLocalY",
+     "type": "Single"
+    },
+    {
+     "offset": 8,
+     "name": "velocityLocalZ",
+     "type": "Single"
+    },
+    {
+     "offset": 12,
+     "name": "angularVelocityX",
+     "type": "Single"
+    },
+    {
+     "offset": 16,
+     "name": "angularVelocityY",
+     "type": "Single"
+    },
+    {
+     "offset": 20,
+     "name": "angularVelocityZ",
+     "type": "Single"
+    },
+    {
+     "offset": 24,
+     "name": "accelerationLocalX",
+     "type": "Single"
+    },
+    {
+     "offset": 28,
+     "name": "accelerationLocalY",
+     "type": "Single"
+    },
+    {
+     "offset": 32,
+     "name": "accelerationLocalZ",
+     "type": "Single"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "Const": {
+   "pack": 8,
+   "size": -1,
+   "layout": "Auto",
+   "isValueType": false,
+   "fields": [],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "ParticipantLeaderboard": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "status",
+     "type": "ParticipantStatus"
+    },
+    {
+     "offset": 1,
+     "name": "trackStatus",
+     "type": "ParticipantTrackStatus"
+    },
+    {
+     "offset": 2,
+     "name": "lapCurrent",
+     "type": "UInt16"
+    },
+    {
+     "offset": 4,
+     "name": "position",
+     "type": "Byte"
+    },
+    {
+     "offset": 5,
+     "name": "health",
+     "type": "Byte"
+    },
+    {
+     "offset": 6,
+     "name": "wrecks",
+     "type": "UInt16"
+    },
+    {
+     "offset": 8,
+     "name": "frags",
+     "type": "UInt16"
+    },
+    {
+     "offset": 10,
+     "name": "assists",
+     "type": "UInt16"
+    },
+    {
+     "offset": 12,
+     "name": "score",
+     "type": "Int32"
+    },
+    {
+     "offset": 16,
+     "name": "points",
+     "type": "Int32"
+    },
+    {
+     "offset": 20,
+     "name": "deltaLeader",
+     "type": "Int32"
+    },
+    {
+     "offset": 24,
+     "name": "lapTiming",
+     "type": "UInt16"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 6,
+     "offset": 26,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "ParticipantInfo": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "carId",
+     "sizeConst": 64,
+     "offset": 0,
+     "unmanagedType": "30"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "carName",
+     "sizeConst": 96,
+     "offset": 64,
+     "unmanagedType": "30"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "playerName",
+     "sizeConst": 24,
+     "offset": 160,
+     "unmanagedType": "30"
+    },
+    {
+     "offset": 184,
+     "name": "participantIndex",
+     "type": "Byte"
+    },
+    {
+     "offset": 185,
+     "name": "lastNormalTrackStatusTime",
+     "type": "Int32"
+    },
+    {
+     "offset": 189,
+     "name": "lastCollisionTime",
+     "type": "Int32"
+    },
+    {
+     "offset": 193,
+     "name": "lastResetTime",
+     "type": "Int32"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 16,
+     "offset": 197,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "CarFull": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "assists",
+     "type": "CarAssists"
+    },
+    {
+     "offset": 8,
+     "name": "chassis",
+     "type": "CarChassis"
+    },
+    {
+     "offset": 60,
+     "name": "driveline",
+     "type": "CarDriveline"
+    },
+    {
+     "offset": 84,
+     "name": "engine",
+     "type": "CarEngine"
+    },
+    {
+     "offset": 140,
+     "name": "input",
+     "type": "CarInput"
+    },
+    {
+     "offset": 160,
+     "name": "orientation",
+     "type": "CarMotionOrientation"
+    },
+    {
+     "offset": 194,
+     "name": "velocity",
+     "type": "CarMotionVelocity"
+    },
+    {
+     "type": "CarTire[]",
+     "arraySubType": "0",
+     "name": "tires",
+     "sizeConst": 4,
+     "offset": 230,
+     "unmanagedType": "30"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 14,
+     "offset": 518,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "ParticipantMotion": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "orientation",
+     "type": "CarMotionOrientation"
+    },
+    {
+     "offset": 34,
+     "name": "velocity",
+     "type": "CarMotionVelocityEssential"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "PacketParticipantsLeaderboard": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "header",
+     "type": "PacketHeader"
+    },
+    {
+     "offset": 14,
+     "name": "participantVisibility",
+     "type": "ParticipantVisibility"
+    },
+    {
+     "type": "ParticipantLeaderboard[]",
+     "arraySubType": "0",
+     "name": "participantsLeaderboard",
+     "sizeConst": 36,
+     "offset": 15,
+     "unmanagedType": "30"
+    },
+    {
+     "type": "Byte[]",
+     "arraySubType": "0",
+     "name": "reserved",
+     "sizeConst": 64,
+     "offset": 1167,
+     "unmanagedType": "30"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  },
+  "CarMotionVelocityEssential": {
+   "pack": 1,
+   "size": -1,
+   "layout": "Sequential",
+   "isValueType": true,
+   "fields": [
+    {
+     "offset": 0,
+     "name": "velocityMagnitude",
+     "type": "Single"
+    }
+   ],
+   "sizeError": "Exception calling \"SizeOf\" with \"1\" argument(s): \"Type 'System.RuntimeType' cannot be marshaled as an unmanaged structure; no meaningful size or offset can be computed.\""
+  }
+ }
+}
