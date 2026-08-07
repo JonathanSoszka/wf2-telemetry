@@ -2,3 +2,8 @@
 sessions/
 
 node_modules/
+
+# Release build — bundles and blobs in build/, the ~86 MB executables in dist/.
+# Output of `npm run build`, attached to a release rather than committed.
+build/
+dist/

@@ -421,6 +421,60 @@ check('the removed capture paths are gone, not merely undocumented', () => {
   return true;
 });
 
+/**
+ * THE RELEASE EXECUTABLE
+ *
+ * Skipped unless `dist/` has been built, so `npm test` on a clean checkout is unaffected.
+ * `npm run release` builds first and therefore always runs this.
+ *
+ * What it is guarding is narrow and specific. The exe is a bundle, and a bundle is where a
+ * `require` of a data file quietly becomes something else — lib/layout.json in particular,
+ * which is the difference between a recording that decodes and 32 KB of field names the
+ * binary no longer has. Nothing about that shows up in the build; it shows up as a session
+ * whose track is `undefined`. So the check is not that the file exists, it is that the exe
+ * records a session and gets the names right.
+ *
+ * It also covers the other half of shipping a binary: `script: null`, which is how a
+ * supervisor points at the exe rather than at `node record.js`.
+ */
+checkAsync('the built executable records a session on its own', async () => {
+  const exe = path.join(__dirname, 'dist', 'wf2-record' + (process.platform === 'win32' ? '.exe' : ''));
+  if (!fs.existsSync(exe)) return true; // not built — nothing to verify
+
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf2-exe-'));
+  const port = await freePort();
+  const rec = createSupervisor({ out: outDir, udpPort: port, node: exe, script: null });
+  const fwd = createForwarder({ port, hz: 250, repeat: 2 });
+
+  try {
+    const started = rec.start();
+    if (started.error) return started.error;
+    fwd.start();
+
+    const writing = await until(rec, (s) => s.state === 'recording' && s.frames > 0, 20000);
+    if (!writing) return `the exe never reported frames; last state was ${rec.status().state}`;
+
+    // The layout assertion. A bundle that lost layout.json still starts, still binds, and
+    // still counts frames — it just cannot name anything it decoded.
+    const s = rec.status();
+    if (s.trackName !== fixture.TRACK.name) return `track decoded as ${JSON.stringify(s.trackName)} — the layout did not survive bundling`;
+
+    await rec.stop();
+    fwd.stop();
+
+    const files = fs.readdirSync(outDir).filter((f) => f.endsWith('.jsonl'));
+    if (files.length !== 1) return `${files.length} recordings written, expected 1`;
+    const lines = fs.readFileSync(path.join(outDir, files[0]), 'utf8').split('\n').filter(Boolean);
+    if (JSON.parse(lines[0])._ !== 'session') return 'the first line is not a session header';
+    if (lines.length < 2) return 'the exe wrote a header and no frames';
+    return true;
+  } finally {
+    fwd.stop();
+    await rec.stop();
+    if (!process.argv.includes('--keep')) fs.rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
 // =========================================================================================
 
 const keep = process.argv.includes('--keep');

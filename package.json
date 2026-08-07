@@ -1,6 +1,6 @@
 {
   "name": "wf2-telemetry",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Wreckfest 2 telemetry capture — records a session to a .jsonl log from SimHub's UDP forward",
   "main": "lib/index.js",
   "bin": {
@@ -14,7 +14,9 @@
     "FORMAT.md"
   ],
   "scripts": {
-    "test": "node verify.js"
+    "test": "node verify.js",
+    "build": "node tools/build-exe.js",
+    "release": "node tools/build-exe.js && node verify.js"
   },
   "engines": {
     "node": ">=18"
@@ -26,5 +28,9 @@
     "sim-racing"
   ],
   "license": "MIT",
-  "private": false
+  "private": false,
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "postject": "^1.0.0-alpha.6"
+  }
 }

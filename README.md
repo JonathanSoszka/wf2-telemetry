@@ -19,6 +19,9 @@ node record.js --udp-port 23125   # if something else already has 23124
 Recording starts by itself when you go on track and stops when you leave. `Ctrl-C` when you
 are done.
 
+**No Node installed?** Releases ship `wf2-record.exe`, which is the same thing with the
+runtime inside it — same flags, no install. See [Release executables](#release-executables).
+
 The recording format is documented in [FORMAT.md](FORMAT.md)
 
 ---
@@ -113,6 +116,69 @@ node tools/mock-forward.js --port 23124       # then: node record.js
 
 ---
 
+## Release executables
+
+`wf2-record.exe` and `wf2-telemetry-config.exe` are the two commands with a Node runtime
+folded into them. Nothing to install, and the flags are identical:
+
+```bash
+wf2-record.exe --out D:\somewhere
+```
+
+The config tool ships alongside the recorder because it diagnoses the failure that makes the
+recorder sit there receiving nothing — telemetry switched off in the game, or its one UDP
+target pointed somewhere stale — and `node tools/telemetry.js` is not available to someone
+who took the exe precisely to avoid installing Node.
+
+To build them:
+
+```bash
+npm run release
+```
+
+That builds into `dist/` and then runs the suite against what it built. `npm run build` is
+the build on its own. Both need Node 20 or newer — the *package* still runs on 18; SEA is
+what needs 20.
+
+**What they are.** Node can inject a script into a copy of itself, so the exe is literally
+the `node.exe` that built it with the recorder's code inside. No packer and no third-party
+runtime: what ships is what `npm test` ran. The cost is ~86 MB per binary, because a whole
+runtime is in there, and there is no compressing that away.
+
+**Build them on the platform you are shipping to.** The base is the local `node.exe`, so
+this cannot cross-build. A macOS or Linux release means running the build there.
+
+**Signing.** The build strips the Authenticode signature it inherits from `node.exe` before
+injecting, because a signature that no longer matches its contents is treated worse by
+Windows than none at all. That needs `signtool` from the Windows SDK; the build finds it
+without help but says so if it cannot, and a release should not be cut from that build. The
+result is unsigned, so SmartScreen will warn on first run.
+
+**Cutting a release.** Push a version tag and
+[`.github/workflows/release.yml`](.github/workflows/release.yml) does the rest — builds on a
+Windows runner, runs the suite against the binaries it just built, and attaches
+`wf2-telemetry-<tag>-win-x64.zip` (both exes, this README, `FORMAT.md`, `SHA256SUMS.txt`) to
+the GitHub release.
+
+```bash
+git tag v2.1.0 && git push origin v2.1.0
+```
+
+Windows only, and not because of the build: SimHub is a Windows program, so a Linux binary
+would run and then wait forever for a datagram nothing on that machine can send. The Node
+version is pinned in the workflow rather than tracking `lts/*`, because it is not a build
+detail — it is the runtime inside the executables. Publishing to npm stays a deliberate
+`npm publish`; the workflow does not do it.
+
+**Supervising an exe.** `createSupervisor` spawns `node record.js` by default. Point it at a
+binary with `script: null`, which tells it the command *is* the recorder:
+
+```js
+createSupervisor({ out, udpPort: 23124, node: 'C:\\...\\wf2-record.exe', script: null });
+```
+
+---
+
 ## Files
 
 | Path | Purpose |
@@ -128,6 +194,7 @@ node tools/mock-forward.js --port 23124       # then: node record.js
 | `tools/mock-forward.js` | A stand-in for SimHub's forward, for testing capture offline |
 | `tools/fixture.js` | The packet stream behind it |
 | `tools/dump-layout.ps1` | Regenerates `layout.json` from the SimHub DLL |
+| `tools/build-exe.js` | Builds the release executables into `dist/` |
 | `verify.js` | The suite |
 
 Recordings land in `sessions/` under the current directory. They are generated; they are not

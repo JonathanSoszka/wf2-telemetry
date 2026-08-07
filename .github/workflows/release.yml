@@ -1,0 +1,115 @@
+# Cuts a release from a version tag: builds the executables, verifies them, attaches them.
+#
+# WINDOWS ONLY, ON PURPOSE
+#
+# Not a limitation of the build — a fact about the capture path. The recorder takes SimHub's
+# UDP forward, and SimHub is a Windows program, as is the game. A Linux binary would build
+# and run and then wait forever for a datagram that nothing on that machine can send. Anyone
+# who does want one can run `npm run build` there; a SEA is built from the local node, so
+# this workflow could not cross-build it anyway.
+#
+# The exes are attached to the release rather than committed. They are ~86 MB each, they are
+# output, and git is not where output goes.
+#
+# Publishing to npm is deliberately not here. That is a separate decision with a separate
+# credential, and it should stay a deliberate `npm publish`.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  # So a release can be rebuilt without inventing a tag for it.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and release (e.g. v2.1.0)'
+        required: true
+
+permissions:
+  contents: write   # to create the release and upload to it
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      # Pinned rather than 'lts/*'. This version is not a build detail — it is the runtime
+      # that ends up INSIDE the executables, so letting it drift means the binaries change
+      # underneath a rebuild of the same tag.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.20.0'
+          cache: npm
+
+      # `ci` not `install`: the lockfile decides, and a release is the last place to let a
+      # build tool resolve to something newer than what was tested.
+      - run: npm ci
+
+      # --strict fails the build if the inherited Authenticode signature cannot be stripped.
+      # The runner has the Windows SDK, so this should never fire; if it does, the release
+      # stops rather than shipping a binary whose signature no longer matches its contents.
+      - name: Build the executables
+        run: node tools/build-exe.js --strict
+
+      # Runs against dist/, so it is the built binaries that are checked and not just the
+      # source they came from. The suite records a session through each exe.
+      - name: Verify
+        run: npm test
+
+      # Unsigned binaries, so publish something a person can check them against.
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-ChildItem dist/*.exe |
+            Get-FileHash -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
+            Set-Content dist/SHA256SUMS.txt -Encoding ascii
+          Get-Content dist/SHA256SUMS.txt
+
+      - name: Package
+        shell: pwsh
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          Copy-Item README.md, FORMAT.md dist/
+          Compress-Archive -Path dist/* -DestinationPath "wf2-telemetry-$env:TAG-win-x64.zip"
+
+      # `gh` is on the runner already; no third-party action in the path of a release.
+      # --verify-tag so a typo cannot create a tag that does not exist.
+      - name: Publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          # A LITERAL here-string. In an expandable one (@"..."@) a backtick is the escape
+          # character, so every `` in the markdown below would collapse to a single ` and
+          # the code spans would come out mangled.
+          $notes = @'
+          Built by `.github/workflows/release.yml` on Node 22.20.0, win-x64.
+
+          `wf2-record.exe` is the recorder and `wf2-telemetry-config.exe` inspects the game's
+          telemetry config. Both carry their own runtime — no Node needed, and the flags are
+          the same as the `node` commands in the README.
+
+          The binaries are unsigned, so SmartScreen will warn on first run. `SHA256SUMS.txt`
+          in the zip is there to check them against.
+          '@
+
+          $zip = "wf2-telemetry-$env:TAG-win-x64.zip"
+
+          # Asked by exit code, not by whether anything was printed. `gh release view` puts
+          # its "not found" on stderr and returns non-zero; reading the output instead makes
+          # every future change to that message a coin toss.
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG $zip --clobber
+          } else {
+            gh release create $env:TAG $zip --title $env:TAG --notes $notes --verify-tag
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
