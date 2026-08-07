@@ -2,7 +2,7 @@
 'use strict';
 // Session recorder — captures Wreckfest 2 telemetry to a JSONL log for offline analysis.
 //
-// TWO SOURCES, AND WHY THE DEFAULT IS THE API
+// THREE SOURCES, AND WHY THE DEFAULT IS THE API
 //
 // The obvious way to get full-rate telemetry is to read the game's UDP stream directly. It
 // does not work here, and the reason is worth writing down: Wreckfest 2 OWNS its
@@ -16,15 +16,26 @@
 // produces — so nothing is lost by going this way. Measured at over 5000 polls/second on
 // loopback, which is two orders of magnitude clear of the game's own tick.
 //
-// `--source udp` remains for the case where SimHub is not running or does not expose Raw.
-// It requires pointing the game's SINGLE udp target at this recorder and letting it relay
-// onward to SimHub (`node tools/telemetry.js --forward`), which makes SimHub depend
-// on this process being up. That is why it is not the default.
+// The two UDP sources differ in WHO IS UPSTREAM, which is the only thing that matters:
 //
-//   node record.js                    # poll SimHub (no game config change)
-//   node record.js --source udp       # bind udp/23124 and relay to SimHub
+//   --source simhub-udp   game -> SimHub -> here.  SimHub's own UDP forwarding does the
+//                         work; nothing depends on this process. Use this when SimHub is
+//                         running but its API is not usable — a build that stops exposing
+//                         `Raw` still forwards, because forwarding happens at the socket,
+//                         below whatever the reader chooses to publish.
+//
+//   --source udp          game -> here -> SimHub.  Last resort, for SimHub not running at
+//                         all. Needs the game's SINGLE udp target repointed at this
+//                         recorder (`node tools/telemetry.js --forward`), and SimHub then
+//                         receives telemetry ONLY while this process is up. That inverted
+//                         dependency is why it is neither the default nor the first
+//                         fallback.
+//
+//   node record.js                       # poll SimHub (nothing to configure)
+//   node record.js --source simhub-udp   # bind udp/23124, SimHub forwards to us
+//   node record.js --source udp          # bind udp/23124 and relay onward to SimHub
 //   node record.js --out D:\somewhere
-//   node record.js --supervised       # driven by another program, not a terminal
+//   node record.js --supervised          # driven by another program, not a terminal
 //
 // SUPERVISED MODE
 //
@@ -57,6 +68,8 @@ const DEFAULTS = {
   pollMs: 5, // ~200 Hz ceiling; the game ticks far slower, and duplicates are dropped
 };
 
+const SOURCES = ['api', 'simhub-udp', 'udp'];
+
 /**
  * WHERE RECORDINGS GO BY DEFAULT
  *
@@ -77,6 +90,7 @@ function parseArgs(argv) {
     else if (v === '--out') a.out = argv[++i];
     else if (v === '--port') a.port = Number(argv[++i]);
     else if (v === '--udp-port') a.udpPort = Number(argv[++i]);
+    else if (v === '--simhub-port') a.simhubPort = Number(argv[++i]);
     else if (v === '--forward') a.forward = true;
     else if (v === '--poll-ms') a.pollMs = Number(argv[++i]);
     else if (v === '--supervised') a.supervised = true;
@@ -324,9 +338,11 @@ function runApi(args, writer) {
         console.error(
           `\n  A game is running but the raw packet is not usable:` +
           `\n    ${d.why}` +
-          `\n\n  Fall back to reading the game directly:` +
-          `\n    node tools/telemetry.js --forward   (then restart Wreckfest 2)` +
-          `\n    node record.js --source udp\n`
+          `\n\n  Fall back to UDP. SimHub forwards below the level of whatever its reader` +
+          `\n  chooses to publish, so this works even when the API view does not — and it` +
+          `\n  changes nothing about the game's own config:` +
+          `\n    SimHub -> Settings -> Games -> Wreckfest 2, forward UDP to 127.0.0.1:${args.udpPort}` +
+          `\n    node record.js --source simhub-udp\n`
         );
         return;
       }
@@ -342,18 +358,61 @@ function runApi(args, writer) {
 }
 
 // -----------------------------------------------------------------------------------------
-// source: the game's UDP stream (fallback)
+// source: UDP datagrams — either forwarded by SimHub, or straight from the game
+//
+// ONE DECODER, TWO TOPOLOGIES. The bytes are identical either way; SimHub forwards the
+// datagram it received rather than a view of it. What differs is who is upstream, and
+// therefore whether this process owes SimHub a relay:
+//
+//   simhub-udp   game -> SimHub -> here.  We are a leaf. Relaying would send SimHub its own
+//                forwarded packets back, which it forwards again — a loop that amplifies
+//                until something falls over, not a subtle one.
+//   udp          game -> here -> SimHub.  We are in the middle. NOT relaying silently
+//                starves SimHub of the telemetry it is still expected to be showing.
+//
+// Both failures are severe and neither announces itself, so the relay is decided once from
+// the source rather than left as a flag anyone can pair with the wrong topology.
 // -----------------------------------------------------------------------------------------
 
+// Above this many datagrams in a second, the relay is feeding itself. The game ticks near
+// 60 Hz and sends a handful of packet types, so this is more than an order of magnitude of
+// headroom over any real session — a rate like this is not a busy race, it is the loop.
+const LOOP_RATE = 1000;
+
+// How long to wait before suggesting that nothing is configured to send here. Nothing
+// arriving looks exactly like "no session started yet", and the two need different fixes.
+const QUIET_MS = 20000;
+
 function runUdp(args, writer) {
+  const relaying = args.source === 'udp';
   const sock = dgram.createSocket('udp4');
-  const relay = dgram.createSocket('udp4');
+  const relay = relaying ? dgram.createSocket('udp4') : null;
   let sawAny = false;
 
+  let windowStart = Date.now();
+  let inWindow = 0;
+  let loopBroken = false;
+
   sock.on('message', (buf) => {
-    // Relay FIRST and unconditionally: in this mode SimHub is downstream of us, so a decode
-    // problem here must never cost it a packet.
-    relay.send(buf, args.simhubPort, '127.0.0.1');
+    // Relay BEFORE decoding, and regardless of whether the packet parses: SimHub is
+    // downstream in this mode, so a decode problem here must never cost it a packet.
+    if (relay && !loopBroken) {
+      const now = Date.now();
+      if (now - windowStart >= 1000) { windowStart = now; inWindow = 0; }
+      if (++inWindow > LOOP_RATE) {
+        loopBroken = true;
+        console.error(
+          `\n  Over ${LOOP_RATE} datagrams a second on udp/${args.udpPort} — that is a forwarding` +
+          `\n  loop, not a session. SimHub is almost certainly ALSO forwarding to this port.` +
+          `\n  Relaying to SimHub is now off so it stops amplifying; recording continues.` +
+          `\n\n  Pick one direction: either use --source simhub-udp (SimHub forwards to us),` +
+          `\n  or turn SimHub's UDP forward off and keep --source udp.\n`
+        );
+        event({ state: 'relay-off', note: 'forwarding loop detected; relay to SimHub disabled' });
+      } else {
+        relay.send(buf, args.simhubPort, '127.0.0.1');
+      }
+    }
 
     const type = packetTypeOf(buf);
     if (type === null) return;
@@ -373,24 +432,56 @@ function runUdp(args, writer) {
     process.exit(1);
   });
 
+  // Unref'd: this is a hint, and it must not be the reason the process stays alive.
+  const quiet = setTimeout(() => {
+    if (sawAny) return;
+    console.error(
+      relaying
+        ? `\n  Nothing has arrived on udp/${args.udpPort} in ${QUIET_MS / 1000}s.` +
+          `\n  This mode needs the GAME pointed here:` +
+          `\n    node tools/telemetry.js --forward   (then restart Wreckfest 2)\n`
+        : `\n  Nothing has arrived on udp/${args.udpPort} in ${QUIET_MS / 1000}s.` +
+          `\n  This mode needs SIMHUB pointed here: Settings -> Games -> Wreckfest 2,` +
+          `\n  enable the UDP forward and set its target to 127.0.0.1:${args.udpPort}.` +
+          `\n  (SimHub stores it as UDPForwardPort in PluginsData\\GameSettings.json.)\n`
+    );
+  }, QUIET_MS);
+  if (quiet.unref) quiet.unref();
+
   sock.bind(args.udpPort, () => {
     log(`Wreckfest 2 session recorder`);
-    log(`  source      udp/${args.udpPort}, relaying to SimHub on ${args.simhubPort}`);
-    log(`  writing to  ${args.out}`);
-    log(`\n  SimHub only receives telemetry while this process is running.`);
+    if (relaying) {
+      log(`  source      udp/${args.udpPort} from the game, relaying to SimHub on ${args.simhubPort}`);
+      log(`  writing to  ${args.out}`);
+      log(`\n  SimHub only receives telemetry while this process is running.`);
+    } else {
+      log(`  source      udp/${args.udpPort}, forwarded by SimHub`);
+      log(`  writing to  ${args.out}`);
+      log(`\n  SimHub does not depend on this process — it keeps its own feed either way.`);
+    }
     log(`  Waiting for a session. Start a race — Ctrl-C when you are done.`);
-    event({ state: 'waiting', source: 'udp', out: args.out });
+    event({ state: 'waiting', source: args.source, out: args.out });
   });
 
-  return () => { try { sock.close(); relay.close(); } catch (e) {} };
+  return () => {
+    clearTimeout(quiet);
+    try { sock.close(); if (relay) relay.close(); } catch (e) {}
+  };
 }
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
   supervised = args.supervised;
 
+  // Rejected rather than defaulted. A typo in the source silently falling back to the API
+  // would still record — over the wrong path, with the relay decision nobody asked for.
+  if (!SOURCES.includes(args.source)) {
+    console.error(`\nUnknown --source "${args.source}". One of: ${SOURCES.join(', ')}\n`);
+    process.exit(1);
+  }
+
   const writer = createWriter(args);
-  const stop = args.source === 'udp' ? runUdp(args, writer) : runApi(args, writer);
+  const stop = args.source === 'api' ? runApi(args, writer) : runUdp(args, writer);
 
   // Exit only once the recording has actually flushed, with a deadline so a wedged stream
   // cannot leave the process running forever after it has been asked to stop.
@@ -429,4 +520,4 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { createWriter, parseArgs };
+module.exports = { createWriter, parseArgs, SOURCES };

@@ -59,7 +59,8 @@ decodes them; without that, every recording is named after a base64 blob.
 
 ### Why not read the game's UDP stream directly
 
-Because the game will not allow it, and finding that out cost a broken telemetry feed.
+Because the game will not allow a second listener, and finding that out cost a broken telemetry
+feed. (SimHub *forwarding* to a second listener is a different thing, and it works — see below.)
 
 Wreckfest 2's `telemetry/config.json` has a `udp` key holding a JSON **array**, which reads as
 an invitation to add a second target alongside SimHub's. It is not. This build accepts exactly
@@ -72,7 +73,23 @@ node tools/telemetry.js            # show the current state
 node tools/telemetry.js --enable   # repair a feed disabled this way
 ```
 
-**The UDP fallback**, for when SimHub is not running or a future version stops exposing `Raw`:
+### The UDP fallbacks
+
+Two of them, and the difference is which process is upstream.
+
+**Prefer this one.** SimHub can forward the datagrams it receives, so it feeds the recorder
+rather than depending on it. In SimHub: *Settings → Games → Wreckfest 2*, enable the UDP
+forward and point it at `127.0.0.1:23124`.
+
+```bash
+node record.js --source simhub-udp   # bind 23124, decode, relay nothing
+```
+
+Nothing in the game's config changes, and SimHub's own feed is unaffected whether the recorder
+is running or not. This covers a future SimHub that stops exposing `Raw`: forwarding happens at
+the socket, below whatever the reader chooses to publish.
+
+**Last resort**, for when SimHub is not running at all:
 
 ```bash
 node tools/telemetry.js --forward   # single target -> 23124, then restart the game
@@ -80,8 +97,12 @@ node record.js --source udp         # bind 23124, relay every datagram to SimHub
 ```
 
 This replaces the one target rather than adding to it, and the recorder relays onward, so
-SimHub keeps working — but **only while the recorder is running**. That dependency is why it is
-not the default. `--revert` puts the config back.
+SimHub keeps working — but **only while the recorder is running**. That inverted dependency is
+why it is the second choice. `--revert` puts the config back.
+
+Do not run both at once: with SimHub forwarding to 23124 *and* `--source udp` relaying back to
+23123, each packet re-enters the forward that produced it. The recorder watches its own arrival
+rate and cuts the relay if it sees that happen, but the fix is to pick a direction.
 
 ### The packet layout is not guessed
 
@@ -106,10 +127,12 @@ explicit little-endian offset instead of a typed-array view.
 npm test
 ```
 
-14 checks. The codec is round-tripped field kind by field kind; both capture paths are asserted
+17 checks. The codec is round-tripped field kind by field kind; both capture paths are asserted
 to produce **identical frames** from the same packet — otherwise a recording means something
-different depending on how it was captured; and a real `record.js` child is driven against a
-mock SimHub to pin that stopping a recording flushes it rather than truncating it.
+different depending on how it was captured; a real `record.js` child is driven against a
+mock SimHub to pin that stopping a recording flushes it rather than truncating it; and each UDP
+source is run against a real socket to prove it relays, or does not, in the one direction that
+is correct for it.
 
 `tools/mock-simhub.js` serves what SimHub's API would, base64 `Byte[]` fields and all — serving
 *some* JSON would test a payload shape that never occurs. `tools/fixture.js` is the packet

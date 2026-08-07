@@ -1,6 +1,6 @@
 'use strict';
-// Verification for the capture path: the wire codec, the two telemetry sources, and the
-// supervisor that runs a recording on someone else's behalf.
+// Verification for the capture path: the wire codec, the telemetry sources and which way
+// their datagrams flow, and the supervisor that runs a recording on someone else's behalf.
 //
 // Everything here is about getting bytes off the game and onto disk intact. Nothing here
 // knows what a corner is — what a recording MEANS is a question for whatever reads it, and
@@ -17,6 +17,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const dgram = require('dgram');
 
 const packet = require('./lib/packet');
 const { frameOf, sessionHeaderOf, FORMAT_VERSION } = require('./lib/frame');
@@ -355,6 +356,104 @@ checkAsync('supervised output is machine-readable, and interactive output is not
 });
 
 // =========================================================================================
+// the UDP relay direction
+//
+// Which way the datagrams flow is the one thing the two UDP sources disagree about, and
+// both ways of getting it wrong are severe and silent. Relaying in simhub-udp mode hands
+// SimHub back its own forwarded packets, which it forwards again — an amplifying loop.
+// Not relaying in udp mode leaves SimHub with no telemetry at all while its dashboards
+// carry on showing the last thing they saw. So the actual socket traffic is observed,
+// against a real child process, rather than the decision being unit-tested in isolation.
+// =========================================================================================
+
+/**
+ * Run a recorder on a UDP source, send it one packet, and report what reached the port it
+ * believes SimHub is on.
+ */
+function relayProbe(source) {
+  return new Promise((done) => {
+    const fakeSimhub = dgram.createSocket('udp4');
+    const received = [];
+    fakeSimhub.on('message', (b) => received.push(b));
+
+    fakeSimhub.bind(0, '127.0.0.1', () => {
+      const simhubPort = fakeSimhub.address().port;
+      // Port 0 to let the OS pick, then ask for it back — a hard-coded port would collide
+      // with a real recorder or with the other check in this file.
+      const probe = dgram.createSocket('udp4');
+      probe.bind(0, '127.0.0.1', () => {
+        const recorderPort = probe.address().port;
+        probe.close();
+
+        const proc = require('child_process').spawn(process.execPath, [
+          path.join(__dirname, 'record.js'),
+          '--source', source,
+          '--out', recDir,
+          '--udp-port', String(recorderPort),
+          '--simhub-port', String(simhubPort),
+        ], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+        let out = '';
+        proc.stdout.on('data', (c) => { out += String(c); });
+
+        // Wait for the banner: the socket is not bound until then, and a datagram sent to
+        // an unbound port is simply dropped, which would look like a relay that is off.
+        const send = setInterval(() => {
+          if (!/Waiting for a session/.test(out)) return;
+          clearInterval(send);
+          const tx = dgram.createSocket('udp4');
+          tx.send(packet.encodeMain({ header: { raceTime: 1000 } }), recorderPort, '127.0.0.1', () => {
+            tx.close();
+            setTimeout(() => {
+              proc.kill();
+              fakeSimhub.close();
+              done({ relayed: received.length, banner: out });
+            }, 600);
+          });
+        }, 50);
+
+        setTimeout(() => {
+          clearInterval(send);
+          try { proc.kill(); } catch (e) {}
+          try { fakeSimhub.close(); } catch (e) {}
+          done({ relayed: received.length, banner: out, timedOut: true });
+        }, 10000);
+      });
+    });
+  });
+}
+
+checkAsync('relay: --source udp passes datagrams on to SimHub', async () => {
+  const r = await relayProbe('udp');
+  if (r.timedOut) return 'the recorder never reported it was listening';
+  if (r.relayed !== 1) return `SimHub received ${r.relayed} datagrams, expected 1 — its feed is being starved`;
+  return true;
+});
+
+checkAsync('relay: --source simhub-udp sends nothing back to SimHub', async () => {
+  // SimHub is UPSTREAM here. Anything sent back to it is fed straight into the forward that
+  // produced it, and the loop amplifies from there.
+  const r = await relayProbe('simhub-udp');
+  if (r.timedOut) return 'the recorder never reported it was listening';
+  if (r.relayed !== 0) return `${r.relayed} datagrams went back to SimHub — that is a forwarding loop`;
+  if (!/forwarded by SimHub/.test(r.banner)) return 'the banner does not say which topology it is in';
+  return true;
+});
+
+checkAsync('an unknown --source is refused, not quietly recorded over the default path', async () => {
+  // Falling back to the API on a typo still produces a recording, so nothing looks wrong —
+  // it is just not the capture path that was asked for, with a relay nobody chose.
+  const proc = require('child_process').spawn(process.execPath,
+    [path.join(__dirname, 'record.js'), '--source', 'simhub-upd', '--out', recDir],
+    { stdio: ['pipe', 'pipe', 'pipe'] });
+  let err = '';
+  proc.stderr.on('data', (c) => { err += String(c); });
+  const code = await new Promise((r) => proc.on('exit', r));
+  if (code === 0) return 'exited 0 on an unknown source';
+  return /Unknown --source/.test(err) ? true : `said: ${err.trim() || '(nothing)'}`;
+});
+
+// =========================================================================================
 
 const keep = process.argv.includes('--keep');
 
@@ -367,7 +466,7 @@ function finish() {
     for (const f of failures) console.log(`  x  ${f}\n`);
     process.exit(1);
   }
-  console.log(`  ${passed} checks passed — codec, both capture paths, format version, recorder lifecycle`);
+  console.log(`  ${passed} checks passed — codec, both capture paths, relay direction, format version, recorder lifecycle`);
 }
 
 simhub.listen(0, '127.0.0.1', async () => {

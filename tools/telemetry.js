@@ -14,6 +14,12 @@
 // Editing the fields of the existing single entry does stick — that is how telemetry was
 // turned on in the first place.
 //
+// `--forward` is now the LAST resort, not the first. If SimHub is running at all, its own
+// UDP forwarding (Settings -> Games -> Wreckfest 2) sends the same datagrams to the
+// recorder without touching this file and without SimHub depending on the recorder —
+// `node record.js --source simhub-udp`. Reach for `--forward` only when SimHub is not in
+// the picture.
+//
 //   node tools/telemetry.js              # show the current state
 //   node tools/telemetry.js --enable     # ensure telemetry is on (repairs enabled:0)
 //   node tools/telemetry.js --forward    # send to the recorder, which relays onward
@@ -41,7 +47,7 @@ function describe(cfg) {
   const lines = [];
   for (const t of cfg.udp || []) {
     const who =
-      String(t.port) === RECORDER_PORT ? 'this recorder (relaying to SimHub)'
+      String(t.port) === RECORDER_PORT ? 'this recorder, which relays to SimHub'
       : String(t.port) === SIMHUB_PORT ? 'SimHub'
       : 'unknown';
     lines.push(`      ${t.enabled ? 'ON ' : 'OFF'}  ${t.ip}:${t.port}   ${who}`);
@@ -138,6 +144,10 @@ function main() {
     } else if (target === SIMHUB_PORT) {
       console.log('\n  Normal setup: the game feeds SimHub, and `node record.js` reads');
       console.log('  SimHub over its API. No change to this file is needed.');
+      console.log('\n  If the API view is ever unusable, prefer SimHub\'s own UDP forward');
+      console.log(`  (Settings -> Games -> Wreckfest 2, target 127.0.0.1:${RECORDER_PORT}) with`);
+      console.log('  `node record.js --source simhub-udp`. That also needs nothing here, and');
+      console.log('  leaves SimHub\'s feed independent of the recorder. --forward does not.');
     } else if (target === RECORDER_PORT) {
       console.log('\n  Forward mode: the game feeds the recorder, which relays to SimHub.');
       console.log('  SimHub gets telemetry only while `record.js --source udp` is running.');
