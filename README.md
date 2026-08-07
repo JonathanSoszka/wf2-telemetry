@@ -3,13 +3,21 @@
 Captures **Wreckfest 2** telemetry to a `.jsonl` log — every frame, world position,
 per-tyre slip, load and force — so it can be analysed offline.
 
-It reads the telemetry SimHub is already receiving, over SimHub's HTTP API. It does **not**
-touch the game's configuration, is not in SimHub's path, and cannot affect the dashboards.
+It reads the telemetry SimHub is already receiving. It does **not** touch the game's
+configuration, is not in SimHub's path, and cannot affect the dashboards.
+
+**One-time setup.** In SimHub: *Settings → Games → Wreckfest 2*, enable the UDP forward and
+point it at `127.0.0.1:23124`. SimHub then sends the recorder a copy of every datagram, and
+keeps its own feed regardless of whether the recorder is running.
 
 ```bash
-node record.js                    # poll SimHub, write to ./sessions
+node record.js                    # listen on 23124, write to ./sessions
 node record.js --out D:\somewhere
+node record.js --udp-port 23125   # if something else already has 23124
 ```
+
+If nothing arrives, the recorder says what probably needs setting rather than sitting on a
+silent port.
 
 Recording starts by itself when you go on track and stops when you leave. `Ctrl-C` when you
 are done.
@@ -24,8 +32,9 @@ this one.
 ```js
 const wf2 = require('wf2-telemetry');
 
-wf2.shortEnum('SurfaceType', frame.T[0].su);   // 2 -> 'GRAVEL'
+wf2.shortEnum('SurfaceType', frame.T[0].su);   // 2 -> 'TARMAC'
 wf2.frameOf(packet);                            // PacketMain -> a frame line
+wf2.encodeMain(packet);                         // PacketMain -> a datagram, for tests
 wf2.createSupervisor({ out: 'sessions' });      // run a recording behind a UI
 ```
 
@@ -41,26 +50,40 @@ the recording ends mid-line.
 
 ## How the capture works
 
-The recorder reads **SimHub** over `http://localhost:8888/Api/GetGameData`.
+One path:
 
-That endpoint carries far more than the mapped properties. `NewData.Raw` is the public `Raw`
-field on `GameReaderCommon.StatusData<T>`, and for Wreckfest 2 that is `WreckFest2Data.Main` —
-a `PacketMain` property, serialised whole. So world position, per-tyre slip, load and lateral
-force all come through HTTP, and the JSON path and the UDP path are pushed through the same
-frame builder so a recording means the same thing either way (asserted in `verify.js`).
+```
+game  --udp-->  SimHub  --forward-->  recorder
+```
 
-Polling is fast enough by a wide margin: over **5000 polls/second** on loopback, against a game
-that ticks at around 60. The recorder caps itself at ~200 Hz and drops duplicate frames by
-`raceTime`.
+SimHub forwards a copy of each datagram to `127.0.0.1:23124`; the recorder decodes it and sends
+nothing anywhere. It is a **leaf** — nothing downstream of it, nothing depending on it. A tool
+that records a thing should not be able to break the thing it records.
 
-One wrinkle: C# `Byte[]` fields — `trackName`, `carName`, `carId` — are serialised by Json.NET
-as **base64**, so they arrive as `"U3ludGhldGlj..."` rather than text. `lib/apiframe.js`
-decodes them; without that, every recording is named after a base64 blob.
+Being a leaf costs no fidelity. Measured against a real 41.6 s session, the forward delivers the
+game's own tick intact — **62.5 Hz, a 16 ms gap on 2598 of 2599 frames**, one 32 ms gap, nothing
+larger. SimHub passes the datagrams straight through rather than resampling at its own rate. It
+also works below the level of whatever SimHub's reader chooses to publish, so it survives a
+SimHub that stops exposing `Raw`.
 
-### Why not read the game's UDP stream directly
+`verify.js` watches the machine's UDP traffic while a real recorder runs and fails if a single
+datagram leaves it, so "leaf" is a property that is checked rather than a claim in a README.
 
-Because the game will not allow a second listener, and finding that out cost a broken telemetry
-feed. (SimHub *forwarding* to a second listener is a different thing, and it works — see below.)
+### When nothing arrives
+
+The one prerequisite lives in another program's settings. If twenty seconds pass with nothing on
+the socket, the recorder reads `PluginsData\GameSettings.json` and names the likely cause.
+
+Only after a silence, never as a precondition: SimHub holds its configuration in memory and
+writes that file on exit, so it lags the running program and cannot predict whether the feed
+works — checked at startup it announced "no port is set" on a machine that was receiving
+forwarded packets at that moment. It also stays quiet unless the settings *positively* disagree.
+See [lib/simhub-config.js](lib/simhub-config.js).
+
+### Why the game is not read directly
+
+Because it will not allow a second listener, and finding that out cost a broken telemetry feed.
+SimHub *forwarding* to a second listener is a different thing, and it is what this uses.
 
 Wreckfest 2's `telemetry/config.json` has a `udp` key holding a JSON **array**, which reads as
 an invitation to add a second target alongside SimHub's. It is not. This build accepts exactly
@@ -71,38 +94,15 @@ existing single entry does stick; adding to the array does not.
 ```bash
 node tools/telemetry.js            # show the current state
 node tools/telemetry.js --enable   # repair a feed disabled this way
+node tools/telemetry.js --simhub   # point it back at SimHub, if an old --forward moved it
 ```
 
-### The UDP fallbacks
+### Two paths that were removed
 
-Two of them, and the difference is which process is upstream.
-
-**Prefer this one.** SimHub can forward the datagrams it receives, so it feeds the recorder
-rather than depending on it. In SimHub: *Settings → Games → Wreckfest 2*, enable the UDP
-forward and point it at `127.0.0.1:23124`.
-
-```bash
-node record.js --source simhub-udp   # bind 23124, decode, relay nothing
-```
-
-Nothing in the game's config changes, and SimHub's own feed is unaffected whether the recorder
-is running or not. This covers a future SimHub that stops exposing `Raw`: forwarding happens at
-the socket, below whatever the reader chooses to publish.
-
-**Last resort**, for when SimHub is not running at all:
-
-```bash
-node tools/telemetry.js --forward   # single target -> 23124, then restart the game
-node record.js --source udp         # bind 23124, relay every datagram to SimHub
-```
-
-This replaces the one target rather than adding to it, and the recorder relays onward, so
-SimHub keeps working — but **only while the recorder is running**. That inverted dependency is
-why it is the second choice. `--revert` puts the config back.
-
-Do not run both at once: with SimHub forwarding to 23124 *and* `--source udp` relaying back to
-23123, each packet re-enters the forward that produced it. The recorder watches its own arrival
-rate and cuts the relay if it sees that happen, but the fix is to pick a direction.
+The game feeding the recorder, which relayed onward to SimHub (`--source udp`), and polling
+SimHub's HTTP API (`--source api`). Both worked; both put something downstream of the recorder,
+and the API also read a view SimHub *chooses* to publish rather than the datagram itself. The
+reasoning is in the commit that removed them, `a462892`.
 
 ### The packet layout is not guessed
 
@@ -127,21 +127,23 @@ explicit little-endian offset instead of a typed-array view.
 npm test
 ```
 
-17 checks. The codec is round-tripped field kind by field kind; both capture paths are asserted
-to produce **identical frames** from the same packet — otherwise a recording means something
-different depending on how it was captured; a real `record.js` child is driven against a
-mock SimHub to pin that stopping a recording flushes it rather than truncating it; and each UDP
-source is run against a real socket to prove it relays, or does not, in the one direction that
-is correct for it.
+The codec is round-tripped field kind by field kind; a real `record.js` child is fed real
+datagrams on a real socket, to pin that stopping a recording flushes it rather than truncating
+it; the recorder is watched for outbound traffic and must emit none; and the settings probe
+behind the silence message is held to reporting only what it can positively establish.
 
-`tools/mock-simhub.js` serves what SimHub's API would, base64 `Byte[]` fields and all — serving
-*some* JSON would test a payload shape that never occurs. `tools/fixture.js` is the packet
-stream behind it, built to sweep field kinds rather than to look like a lap. Read its header
-before adding a signal to it: a fixture field that ignores its wire type reads exactly like a
-codec bug.
+`tools/mock-forward.js` stands in for SimHub's forward. There is little to it, which is the
+point: SimHub forwards the datagram it received rather than a rendering of it, so imitating it
+means putting `encodeMain` output on a socket. It sends each frame twice by default under test,
+because the recorder's rule that the clock must *advance* rather than merely differ would
+otherwise be asserted nowhere.
+
+`tools/fixture.js` is the packet stream behind it, built to sweep field kinds rather than to
+look like a lap. Read its header before adding a signal to it: a fixture field that ignores its
+wire type reads exactly like a codec bug.
 
 ```bash
-node tools/mock-simhub.js --port 8899        # then: node record.js --port 8899
+node tools/mock-forward.js --port 23124       # then: node record.js
 ```
 
 ---
@@ -154,11 +156,11 @@ node tools/mock-simhub.js --port 8899        # then: node record.js --port 8899
 | `lib/index.js` | The public surface |
 | `lib/packet.js` | Packet codec, driven entirely by `layout.json` |
 | `lib/layout.json` | Byte layout, dumped from SimHub's `GSIReader.dll` |
-| `lib/apiframe.js` | Normalises SimHub's JSON view of the packet (base64, enums) |
+| `lib/simhub-config.js` | Reads SimHub's forward setting, to explain a silence |
 | `lib/frame.js` | The shape of one logged frame, and the format version |
 | `lib/supervisor.js` | Runs one `record.js` child: start, stop, status, events |
 | `tools/telemetry.js` | Inspects and repairs the game's telemetry config |
-| `tools/mock-simhub.js` | A fake `/Api/GetGameData`, for testing capture offline |
+| `tools/mock-forward.js` | A stand-in for SimHub's forward, for testing capture offline |
 | `tools/fixture.js` | The packet stream behind it |
 | `tools/dump-layout.ps1` | Regenerates `layout.json` from the SimHub DLL |
 | `verify.js` | The suite |

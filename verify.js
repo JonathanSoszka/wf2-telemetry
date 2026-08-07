@@ -1,29 +1,26 @@
 'use strict';
-// Verification for the capture path: the wire codec, the telemetry sources and which way
-// their datagrams flow, and the supervisor that runs a recording on someone else's behalf.
+// Verification for the capture path: the wire codec, the recorder end to end, and the
+// supervisor that runs a recording on someone else's behalf.
 //
 // Everything here is about getting bytes off the game and onto disk intact. Nothing here
 // knows what a corner is — what a recording MEANS is a question for whatever reads it, and
 // it has its own suite.
 //
 // The failures worth catching are the ones that produce a recording that LOOKS fine:
-// a tyre array read one slot out, a track name left as base64, a stop that truncates the
-// last line, a progress line that corrupts the event stream. Each of those analyses
-// cleanly and means something wrong.
+// a tyre array read one slot out, a stop that truncates the last line, a progress line that
+// corrupts the event stream. Each of those analyses cleanly and means something wrong.
 //
 //   node verify.js
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const http = require('http');
 const dgram = require('dgram');
 
 const packet = require('./lib/packet');
 const { frameOf, sessionHeaderOf, FORMAT_VERSION } = require('./lib/frame');
-const { normalizeMain, describe } = require('./lib/apiframe');
-const { toJsonNet, buildPayloads } = require('./tools/mock-simhub');
 const { createSupervisor } = require('./lib/supervisor');
+const { createForwarder } = require('./tools/mock-forward');
 const fixture = require('./tools/fixture');
 
 let passed = 0;
@@ -118,74 +115,29 @@ check('packet: tyre array is read 1-based (tires[0] is FL, not padding)', () => 
 });
 
 // =========================================================================================
-// the two capture paths must agree
+// the capture path — a packet surviving the trip from the wire to a frame line
 // =========================================================================================
 
-check('capture: the API path and the UDP path produce the same frames', () => {
-  // The recorder can read the game's UDP stream or SimHub's JSON view of the very same
-  // packet. If those disagree, a recording means something different depending on how it
-  // was captured, and no analysis is comparable across sessions. Both are pushed through
-  // the one frame builder, so this pins that they converge.
-  //
-  // The UDP side is quantised to float32 by the wire format; the JSON side is not. So the
-  // comparison is to a tolerance, not to the bit.
-  let n = 0;
-  for (const m of fixture.packets()) {
-    if (n++ % 7 !== 0) continue; // sample across the whole fixture
-    const viaUdp = frameOf(packet.decodeMain(packet.encodeMain(m)));
-    const viaApi = frameOf(normalizeMain(toJsonNet(m)));
-
-    const diff = compare(viaUdp, viaApi, '');
-    if (diff) return `frame ${n}: ${diff}`;
-  }
-  return true;
-
-  function compare(a2, b2, p) {
-    if (typeof a2 === 'number' && typeof b2 === 'number') {
-      const tol = Math.max(1e-3, Math.abs(a2) * 1e-4);
-      return Math.abs(a2 - b2) <= tol ? null : `${p}: udp ${a2} vs api ${b2}`;
-    }
-    if (Array.isArray(a2)) {
-      if (!Array.isArray(b2) || a2.length !== b2.length) return `${p}: array shape differs`;
-      for (let i = 0; i < a2.length; i++) {
-        const d = compare(a2[i], b2[i], `${p}[${i}]`);
-        if (d) return d;
-      }
-      return null;
-    }
-    if (a2 && typeof a2 === 'object') {
-      for (const k of Object.keys(a2)) {
-        const d = compare(a2[k], (b2 || {})[k], `${p}.${k}`);
-        if (d) return d;
-      }
-      return null;
-    }
-    return a2 === b2 ? null : `${p}: udp ${JSON.stringify(a2)} vs api ${JSON.stringify(b2)}`;
-  }
-});
-
-check('capture: base64 byte[] fields survive the API path', () => {
-  // Json.NET serialises a C# Byte[] as base64, so a track name arrives as
-  // "U3ludGhldGlj..." rather than text. Left undecoded it silently names every recording
-  // after a base64 blob and breaks session identity.
+check('capture: a datagram becomes a frame with its fields intact', () => {
+  // The recorder's whole job in one line: bytes off the socket, through the decoder, into
+  // the shape FORMAT.md describes.
   const one = fixture.packets().next().value;
-  const wire = toJsonNet(one);
+  const f = frameOf(packet.decodeMain(packet.encodeMain(one)));
 
-  if (!/^[A-Za-z0-9+/]+=*$/.test(wire.session.trackName)) return 'the mock did not base64-encode trackName, so this proves nothing';
-  const back = normalizeMain(wire);
-  if (back.session.trackName !== one.session.trackName) {
-    return `trackName came back as ${JSON.stringify(back.session.trackName)}`;
-  }
-  if (back.participantPlayerInfo.carName !== one.participantPlayerInfo.carName) {
-    return `carName came back as ${JSON.stringify(back.participantPlayerInfo.carName)}`;
-  }
+  if (f.t !== one.header.raceTime) return `t is ${f.t}`;
+  if (f.T.length !== 4) return `${f.T.length} tyres`;
+  // Distinct per tyre in the fixture, so a corner-order error cannot hide behind symmetry.
+  if (!(f.T[0].lv !== f.T[3].lv)) return 'tyre loads are indistinguishable — this proves nothing';
+  const load = one.carPlayer.tires[0].loadVertical;
+  if (Math.abs(f.T[0].lv - load) > 1) return `FL load is ${f.T[0].lv}, expected ~${load}`;
   return true;
 });
 
-check('capture: a payload with no Raw is reported, not silently half-recorded', () => {
-  if (describe({ NewData: null }).ok) return 'accepted a null NewData';
-  if (describe({ NewData: { SpeedKmh: 100 } }).ok) return 'accepted a payload with no Raw';
-  if (describe({ NewData: { Raw: { Main: { nonsense: 1 } } } }).ok) return 'accepted a Raw that is not a PacketMain';
+check('capture: a foreign datagram is ignored rather than half-decoded', () => {
+  // The forward port is a socket anything on the machine can send to, so the decoder is
+  // what stands between a stray datagram and a frame of nonsense in the recording.
+  if (packet.decodeMain(Buffer.from('hello')) !== null) return 'accepted junk';
+  if (packet.packetTypeOf(Buffer.alloc(3)) !== null) return 'typed a runt datagram';
   return true;
 });
 
@@ -204,29 +156,40 @@ check('format: the session header states which format it is', () => {
 // =========================================================================================
 // the recorder, end to end
 //
-// A real record.js child against a real HTTP server serving the payloads SimHub would —
-// base64 byte[] fields and all. Nothing here is stubbed, because the failures worth catching
-// are exactly the ones a stub would paper over: a stop that truncates the file, a progress
-// line that corrupts the event stream, a child left running.
+// A real record.js child, bound to a real socket, fed real datagrams. Nothing here is
+// stubbed, because the failures worth catching are exactly the ones a stub would paper over:
+// a stop that truncates the file, a progress line that corrupts the event stream, a child
+// left running.
 // =========================================================================================
 
 const recDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf2-capture-'));
-const bodies = buildPayloads(fixture.packets()).map((p) => JSON.stringify(p));
-const noGame = JSON.stringify({ NewData: null, GameRunning: false });
 
-// The mock walks the fixture at half a frame per request, which is the normal case: the
-// recorder polls faster than the game ticks, so duplicate-frame rejection is exercised
-// rather than bypassed. It is rewound before each check that needs frames — the fixture is
-// deliberately short, and a check that silently ran off the end of it would look like a
-// recorder that stopped writing.
-let served = 0;
-const rewind = () => { served = 0; };
-const simhub = http.createServer((req, res) => {
-  const idx = Math.floor(served * 0.5);
-  served++;
-  res.writeHead(200, { 'content-type': 'application/json' });
-  res.end(idx < bodies.length ? bodies[idx] : noGame);
-});
+/** A free UDP port, so concurrent checks and a real recorder cannot collide. */
+function freePort() {
+  return new Promise((done) => {
+    const s = dgram.createSocket('udp4');
+    s.bind(0, '127.0.0.1', () => {
+      const p = s.address().port;
+      s.close(() => done(p));
+    });
+  });
+}
+
+/**
+ * Start a recorder under a supervisor and a forwarder feeding it, and wait until it is
+ * actually writing.
+ *
+ * Each call gets its own port and its own forwarder rather than sharing one: a rewindable
+ * shared feed made every check depend on the order the others ran in.
+ */
+async function recording(opts) {
+  const port = await freePort();
+  const rec = createSupervisor({ out: recDir, udpPort: port });
+  // repeat: 2 sends every frame twice, so the recorder's rule that the clock must ADVANCE
+  // rather than merely differ is exercised instead of bypassed.
+  const fwd = createForwarder({ port, hz: (opts && opts.hz) || 250, repeat: 2 });
+  return { port, rec, fwd, start: () => { const r = rec.start(); fwd.start(); return r; } };
+}
 
 /** Wait for the supervisor to reach a state, or give up. */
 function until(rec, want, ms) {
@@ -249,12 +212,11 @@ function until(rec, want, ms) {
 let recorded = null;
 
 checkAsync('a recording starts, writes frames, and reports them as it goes', async () => {
-  rewind();
-  const rec = createSupervisor({ out: recDir, port: simhub.address().port });
+  const { rec, fwd, start } = await recording();
   const seen = [];
   rec.subscribe((s) => seen.push(s.state));
 
-  const started = rec.start({ source: 'api' });
+  const started = start();
   if (started.error) return started.error;
 
   const writing = await until(rec, (s) => s.state === 'recording' && s.frames > 0, 15000);
@@ -265,6 +227,7 @@ checkAsync('a recording starts, writes frames, and reports them as it goes', asy
   if (mid.trackName !== fixture.TRACK.name) return `track is ${mid.trackName}`;
 
   await rec.stop();
+  fwd.stop();
   if (rec.status().running) return 'still running after stop resolved';
 
   const files = fs.readdirSync(recDir).filter((f) => f.endsWith('.jsonl'));
@@ -294,8 +257,8 @@ checkAsync('a stopped recording is complete, not cut off mid-write', async () =>
   if (parsed.length < 2) return 'no frames were written';
 
   // Asserted here rather than left to the reader: the recorder drops frames whose clock has
-  // not advanced, and SimHub republishing one game frame to many polls is the normal case,
-  // so a regression would fill the file with the same instant over and over.
+  // not advanced, and the forwarder deliberately sends each one twice, so a regression would
+  // fill the file with the same instant recorded over and over.
   for (let i = 2; i < parsed.length; i++) {
     if (!(parsed[i].t > parsed[i - 1].t)) {
       return `frame ${i} has t=${parsed[i].t} after t=${parsed[i - 1].t} — the clock did not advance`;
@@ -306,21 +269,22 @@ checkAsync('a stopped recording is complete, not cut off mid-write', async () =>
 
 checkAsync('a second recorder is refused rather than started alongside the first', async () => {
   // Two recorders both decide a session has begun and both open a file, so one race becomes
-  // two recordings of it, each missing whatever the other's poll won.
-  rewind();
-  const rec = createSupervisor({ out: recDir, port: simhub.address().port });
+  // two recordings of it. On one UDP port the second would not even bind, but the supervisor
+  // is what has to refuse — a child that dies on EADDRINUSE is a worse way to find out.
+  const { rec, fwd, start } = await recording();
   try {
-    if (rec.start({ source: 'api' }).error) return 'the first recorder would not start';
-    const second = rec.start({ source: 'api' });
+    if (start().error) return 'the first recorder would not start';
+    const second = rec.start();
     if (!second.error) return 'a second recorder started alongside the first';
     return second.code === 'already-recording' ? true : `code is ${second.code}`;
   } finally {
     await rec.stop();
+    fwd.stop();
   }
 });
 
 checkAsync('stopping when nothing is recording is refused, not ignored', async () => {
-  const rec = createSupervisor({ out: recDir, port: simhub.address().port });
+  const rec = createSupervisor({ out: recDir, udpPort: await freePort() });
   const r = await rec.stop();
   return r.code === 'not-recording' ? true : `code is ${r.code}`;
 });
@@ -329,23 +293,26 @@ checkAsync('supervised output is machine-readable, and interactive output is not
   // The two modes are exclusive: the `\r`-redrawn progress line has no newline to end it, so
   // one of them appearing in supervised mode runs into the next event and makes it
   // unparseable — which the supervisor would silently drop rather than report.
-  rewind();
-  const rec = createSupervisor({ out: recDir, port: simhub.address().port });
+  const { rec, fwd, start } = await recording();
   const lines = [];
   const raw = [];
   rec.subscribe((s) => lines.push(s));
-  rec.start({ source: 'api' });
+  start();
   await until(rec, (s) => s.state === 'recording' && s.frames > 0, 15000);
   await rec.stop();
+  fwd.stop();
 
   // Now the same recorder without --supervised, and only for long enough to print its banner.
-  rewind();
+  const port = await freePort();
   const proc = require('child_process').spawn(process.execPath,
-    [path.join(__dirname, 'record.js'), '--out', recDir, '--port', String(simhub.address().port)],
+    [path.join(__dirname, 'record.js'), '--out', recDir, '--udp-port', String(port)],
     { stdio: ['pipe', 'pipe', 'pipe'] });
   proc.stdout.on('data', (c) => raw.push(String(c)));
+  const feed = createForwarder({ port, hz: 250, repeat: 2 });
+  feed.start();
   await sleep(2500);
   proc.kill();
+  feed.stop();
 
   const prose = raw.join('');
   if (!/Wreckfest 2 session recorder/.test(prose)) return 'the interactive recorder stopped printing its banner';
@@ -356,101 +323,102 @@ checkAsync('supervised output is machine-readable, and interactive output is not
 });
 
 // =========================================================================================
-// the UDP relay direction
-//
-// Which way the datagrams flow is the one thing the two UDP sources disagree about, and
-// both ways of getting it wrong are severe and silent. Relaying in simhub-udp mode hands
-// SimHub back its own forwarded packets, which it forwards again — an amplifying loop.
-// Not relaying in udp mode leaves SimHub with no telemetry at all while its dashboards
-// carry on showing the last thing they saw. So the actual socket traffic is observed,
-// against a real child process, rather than the decision being unit-tested in isolation.
+// the recorder is a leaf
 // =========================================================================================
 
-/**
- * Run a recorder on a UDP source, send it one packet, and report what reached the port it
- * believes SimHub is on.
- */
-function relayProbe(source) {
-  return new Promise((done) => {
-    const fakeSimhub = dgram.createSocket('udp4');
-    const received = [];
-    fakeSimhub.on('message', (b) => received.push(b));
+checkAsync('the recorder sends nothing back to SimHub', async () => {
+  // SimHub is UPSTREAM. Anything sent back to it lands in the forward that produced it and
+  // amplifies from there — which is what the removed relay mode risked. There is now no code
+  // path that transmits at all, and that is worth holding onto: this watches the whole
+  // machine's UDP traffic to the port SimHub actually listens on, so a relay reintroduced
+  // anywhere in the recorder would fail this rather than being discovered on a live rig.
+  const listener = dgram.createSocket('udp4');
+  const heard = [];
+  listener.on('message', (b) => heard.push(b));
+  await new Promise((r) => listener.bind(0, '127.0.0.1', r));
 
-    fakeSimhub.bind(0, '127.0.0.1', () => {
-      const simhubPort = fakeSimhub.address().port;
-      // Port 0 to let the OS pick, then ask for it back — a hard-coded port would collide
-      // with a real recorder or with the other check in this file.
-      const probe = dgram.createSocket('udp4');
-      probe.bind(0, '127.0.0.1', () => {
-        const recorderPort = probe.address().port;
-        probe.close();
-
-        const proc = require('child_process').spawn(process.execPath, [
-          path.join(__dirname, 'record.js'),
-          '--source', source,
-          '--out', recDir,
-          '--udp-port', String(recorderPort),
-          '--simhub-port', String(simhubPort),
-        ], { stdio: ['pipe', 'pipe', 'pipe'] });
-
-        let out = '';
-        proc.stdout.on('data', (c) => { out += String(c); });
-
-        // Wait for the banner: the socket is not bound until then, and a datagram sent to
-        // an unbound port is simply dropped, which would look like a relay that is off.
-        const send = setInterval(() => {
-          if (!/Waiting for a session/.test(out)) return;
-          clearInterval(send);
-          const tx = dgram.createSocket('udp4');
-          tx.send(packet.encodeMain({ header: { raceTime: 1000 } }), recorderPort, '127.0.0.1', () => {
-            tx.close();
-            setTimeout(() => {
-              proc.kill();
-              fakeSimhub.close();
-              done({ relayed: received.length, banner: out });
-            }, 600);
-          });
-        }, 50);
-
-        setTimeout(() => {
-          clearInterval(send);
-          try { proc.kill(); } catch (e) {}
-          try { fakeSimhub.close(); } catch (e) {}
-          done({ relayed: received.length, banner: out, timedOut: true });
-        }, 10000);
-      });
-    });
-  });
-}
-
-checkAsync('relay: --source udp passes datagrams on to SimHub', async () => {
-  const r = await relayProbe('udp');
-  if (r.timedOut) return 'the recorder never reported it was listening';
-  if (r.relayed !== 1) return `SimHub received ${r.relayed} datagrams, expected 1 — its feed is being starved`;
-  return true;
-});
-
-checkAsync('relay: --source simhub-udp sends nothing back to SimHub', async () => {
-  // SimHub is UPSTREAM here. Anything sent back to it is fed straight into the forward that
-  // produced it, and the loop amplifies from there.
-  const r = await relayProbe('simhub-udp');
-  if (r.timedOut) return 'the recorder never reported it was listening';
-  if (r.relayed !== 0) return `${r.relayed} datagrams went back to SimHub — that is a forwarding loop`;
-  if (!/forwarded by SimHub/.test(r.banner)) return 'the banner does not say which topology it is in';
-  return true;
-});
-
-checkAsync('an unknown --source is refused, not quietly recorded over the default path', async () => {
-  // Falling back to the API on a typo still produces a recording, so nothing looks wrong —
-  // it is just not the capture path that was asked for, with a relay nobody chose.
+  const port = await freePort();
   const proc = require('child_process').spawn(process.execPath,
-    [path.join(__dirname, 'record.js'), '--source', 'simhub-upd', '--out', recDir],
+    [path.join(__dirname, 'record.js'), '--out', recDir, '--udp-port', String(port)],
     { stdio: ['pipe', 'pipe', 'pipe'] });
-  let err = '';
-  proc.stderr.on('data', (c) => { err += String(c); });
-  const code = await new Promise((r) => proc.on('exit', r));
-  if (code === 0) return 'exited 0 on an unknown source';
-  return /Unknown --source/.test(err) ? true : `said: ${err.trim() || '(nothing)'}`;
+  let out = '';
+  proc.stdout.on('data', (c) => { out += String(c); });
+
+  // Wait for the banner: a datagram sent to a port that is not bound yet is simply dropped,
+  // which would look exactly like a recorder that correctly sent nothing.
+  const deadline = Date.now() + 10000;
+  while (!/Waiting for a session/.test(out) && Date.now() < deadline) await sleep(50);
+  const listening = /Waiting for a session/.test(out);
+
+  const fwd = createForwarder({ port, hz: 250, repeat: 1 });
+  fwd.start();
+  await sleep(1500);
+  proc.kill();
+  fwd.stop();
+  listener.close();
+
+  if (!listening) return 'the recorder never reported it was listening';
+  if (heard.length) return `${heard.length} datagrams were sent back out — the recorder is not a leaf`;
+  if (!/forwarded by SimHub/.test(out)) return 'the banner no longer says where the data comes from';
+  return true;
+});
+
+check('simhub-config: only a settings file that positively disagrees is reported', () => {
+  // This is quoted in the message shown when nothing arrives, so a false positive sends
+  // someone to change a setting that was working. Anything it cannot read confidently must
+  // stay quiet.
+  const { forwardStatus } = require('./lib/simhub-config');
+  const tmp = path.join(recDir, 'GameSettings.json');
+  const write = (o) => { fs.writeFileSync(tmp, JSON.stringify(o)); return { file: tmp }; };
+
+  const on = write({ Wreckfest2: { UDPForwardActive: true, UDPForwardPort: 23124, UDPForwardIpAddress: '127.0.0.1' } });
+  if (forwardStatus(23124, on).ok !== true) return 'a correctly pointed forward was reported as wrong';
+
+  const off = write({ Wreckfest2: { UDPForwardActive: false, UDPForwardPort: 23124 } });
+  if (forwardStatus(23124, off).ok !== false) return 'a disabled forward was not reported';
+
+  const elsewhere = write({ Wreckfest2: { UDPForwardActive: true, UDPForwardPort: 9999 } });
+  const e = forwardStatus(23124, elsewhere);
+  if (e.ok !== false || !/9999/.test(e.why)) return 'a forward to another port was not reported with its port';
+
+  const remote = write({ Wreckfest2: { UDPForwardActive: true, UDPForwardPort: 23124, UDPForwardIpAddress: '192.168.1.9' } });
+  if (forwardStatus(23124, remote).ok !== false) return 'a forward to another machine was accepted';
+
+  // Everything below is a shape this cannot reason about, and must produce no opinion.
+  const quiet = [
+    write({ Wreckfest2: { UDPForwardActive: true, UDPForwardPort: 9999, AddictionnalUDPRedirects: [{ port: 23124 }] } }),
+    write({ SomeOtherGame: {} }),
+    write({}),
+    { file: path.join(recDir, 'does-not-exist.json') },
+  ];
+  for (const q of quiet) {
+    if (forwardStatus(23124, q).known !== false) return `claimed to know about ${JSON.stringify(fs.existsSync(q.file) ? fs.readFileSync(q.file, 'utf8') : 'a missing file')}`;
+  }
+  fs.writeFileSync(tmp, 'not json at all');
+  if (forwardStatus(23124, { file: tmp }).known !== false) return 'claimed to know about an unparseable file';
+  fs.rmSync(tmp, { force: true });
+  return true;
+});
+
+check('the removed capture paths are gone, not merely undocumented', () => {
+  // A half-removal is worse than either state: `--source api` still parsing, or apiframe.js
+  // still on disk for something to require, leaves a path that is no longer tested and no
+  // longer true of the recorder. So the absence is asserted rather than assumed.
+  const { parseArgs } = require('./record.js');
+  const a = parseArgs(['--source', 'api', '--port', '8888', '--poll-ms', '5', '--simhub-port', '23123']);
+  for (const dead of ['source', 'port', 'pollMs', 'simhubPort', 'forward']) {
+    if (a[dead] !== undefined) return `--${dead} still parses into ${JSON.stringify(a[dead])}`;
+  }
+  if (a.udpPort !== 23124) return `udpPort default is ${a.udpPort}`;
+
+  for (const gone of ['./lib/apiframe.js', './tools/mock-simhub.js']) {
+    if (fs.existsSync(path.join(__dirname, gone))) return `${gone} is still on disk`;
+  }
+  const surface = require('./lib/index.js');
+  for (const dead of ['normalizeMain', 'describe', 'bytesToString', 'toJsonNet', 'buildPayloads']) {
+    if (surface[dead] !== undefined) return `lib/index.js still exports ${dead}`;
+  }
+  return true;
 });
 
 // =========================================================================================
@@ -466,10 +434,10 @@ function finish() {
     for (const f of failures) console.log(`  x  ${f}\n`);
     process.exit(1);
   }
-  console.log(`  ${passed} checks passed — codec, both capture paths, relay direction, format version, recorder lifecycle`);
+  console.log(`  ${passed} checks passed — codec, capture, the recorder as a leaf, how a silence is diagnosed, format version, recorder lifecycle`);
 }
 
-simhub.listen(0, '127.0.0.1', async () => {
+(async () => {
   for (const [name, fn] of pending) {
     try {
       const r = await fn();
@@ -479,6 +447,5 @@ simhub.listen(0, '127.0.0.1', async () => {
       failures.push(`${name}\n      threw: ${e.message}`);
     }
   }
-  simhub.close();
   finish();
-});
+})();

@@ -47,9 +47,9 @@ One object, first line, `_` is always `"session"`.
 | `gridSize` | Number of cars |
 | `sectorCount` | Sectors on this track |
 | `sectorFract1`, `sectorFract2` | Sector boundaries as a fraction of the lap |
-| `gameMode`, `damageMode` | Resolved to names, not left as numbers |
+| `gameMode`, `damageMode` | Resolved to names, not numbers — `MODE_BANGER`, `MODE_NORMAL` |
 | `carId`, `carName`, `playerName` | Who was driving what |
-| `driveline` | `FWD` / `RWD` / `AWD`, resolved to a name |
+| `driveline` | `TYPE_FWD` / `TYPE_RWD` / `TYPE_AWD` |
 | `gearMax` | Top gear |
 | `steeringLock` | Radians at full lock |
 | `wheelBase` | Metres |
@@ -58,6 +58,9 @@ One object, first line, `_` is always `"session"`.
 
 Enums that identify the *session* are resolved to strings here, because they are written once
 and read constantly. Enums that vary *per frame* are not — see `su` below.
+
+The resolved name keeps everything after the **first** underscore, so `DRIVELINE_TYPE_RWD`
+is stored as `TYPE_RWD`, not `RWD`. Match on the stored value, not on the tail of it.
 
 ## A frame
 
@@ -105,18 +108,17 @@ assumed. A reader that has this backwards produces a plausible report about the 
 the car.
 
 `su` stays numeric on purpose: four tyres times tens of thousands of frames makes the
-difference between `2` and `"GRAVEL"` material to the file size. Resolve it on read with
+difference between `2` and `"TARMAC"` material to the file size. Resolve it on read with
 `shortEnum('SurfaceType', n)`, exported from this package.
 
 ---
 
 ## Two rules a reader has to know
 
-**`t` strictly increases.** Not "differs from the last value" — increases. SimHub republishes
-the same game frame to every poll and the value jitters backwards by a frame or two, so a
-writer comparing only against the immediately previous value lets repeats through. The
-recorder drops non-advancing frames, and a reader should too: recordings made before that was
-fixed are still out there.
+**`t` strictly increases.** Not "differs from the last value" — increases. A duplicated
+datagram repeats a `raceTime`, and a writer comparing only against the immediately previous
+value lets it through. The recorder drops non-advancing frames and a reader should too:
+recordings made before it enforced that are still out there.
 
 **A backwards jump of more than 2 seconds is a restart, not a dropped frame.** It legitimately
 begins a new run of times. The recorder closes the file and opens a new one; a reader holding

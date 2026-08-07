@@ -6,18 +6,18 @@
 // A program that ANALYSES telemetry has to be tested against ground truth about driving — a
 // track of known corner radii, driven with planted faults — because it can emit
 // confident-looking conclusions from nonsense. This package draws no conclusions. It cares
-// only that every field survives a round trip through the wire format and through SimHub's
-// JSON view of it, which is a question about field kinds, not about racing.
+// only that every field survives a round trip through the wire format, which is a question
+// about field kinds, not about racing.
 //
 // So the fixture is built to sweep the things that break in transit: negative and positive
 // floats, values small enough to expose float32 quantisation and large enough to expose it
 // differently, every tyre carrying DISTINCT values so a corner-order or off-by-one error
-// cannot hide behind symmetry, and strings in the `Byte[]` fields that serialise as base64.
+// cannot hide behind symmetry, and text in the fixed-width `Byte[]` string fields.
 //
 // EVERY FIELD MUST RESPECT ITS WIRE TYPE. `engine.rpm` is `Int32`: give it a fractional
-// value and it survives the JSON path, is truncated by the UDP one, and the two capture
-// paths appear to disagree over a number the game cannot emit in the first place. That
-// reads exactly like a codec bug. Check lib/layout.json before adding a signal here.
+// value and the codec truncates it, so the round trip fails over a number the game cannot
+// emit in the first place. That reads exactly like a codec bug. Check lib/layout.json
+// before adding a signal here.
 
 // Enough frames to sample across, few enough to build instantly. The recorder drops frames
 // whose clock does not advance, so `raceTime` must strictly increase.
@@ -96,9 +96,8 @@ function packetAt(i) {
     carPlayer: {
       driveline: { speed, gear: 1 + (i % 6), gearMax: 6, type: 1 },
       // rpm is Int32 on the wire, so it is rounded HERE rather than left to the codec. A
-      // fractional value would survive SimHub's JSON path and be truncated by the UDP one,
-      // making the two capture paths disagree over a number the game cannot emit in the
-      // first place — a fixture defect that would read as a codec bug.
+      // fractional value would come back truncated and fail the round trip over a number the
+      // game cannot emit in the first place — a fixture defect that reads as a codec bug.
       engine: { rpm: Math.round(2000 + 4000 * (0.5 + 0.5 * sin)), rpmRedline: 6800, rpmMax: 7200 },
       input: {
         throttle: 0.5 + 0.5 * cos,
@@ -146,9 +145,9 @@ function packetAt(i) {
   };
 }
 
-/** The whole fixture, as a generator — same shape as synth.generate(). */
+/** The whole fixture, as a generator. */
 function* packets() {
   for (let i = 0; i < COUNT; i++) yield packetAt(i);
 }
 
-module.exports = { packets, packetAt, COUNT, TICK_MS, TRACK, CAR, PLAYER_LIVE };
+module.exports = { packets, TRACK };
