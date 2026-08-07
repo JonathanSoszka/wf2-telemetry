@@ -1,7 +1,7 @@
 # wf2-telemetry
 
 Captures **Wreckfest 2** telemetry to a `.jsonl` log — every frame, world position,
-per-tyre slip, load and force — so it can be analysed offline.
+per-tyre slip, load and force — so it can be analyzed offline.
 
 It reads the telemetry SimHub is already receiving. It does **not** touch the game's
 configuration, is not in SimHub's path, and cannot affect the dashboards.
@@ -12,18 +12,14 @@ keeps its own feed regardless of whether the recorder is running.
 
 ```bash
 node record.js                    # listen on 23124, write to ./sessions
-node record.js --out D:\somewhere
+node record.js --out D:\somewhere # Custom write directory
 node record.js --udp-port 23125   # if something else already has 23124
 ```
-
-If nothing arrives, the recorder says what probably needs setting rather than sitting on a
-silent port.
 
 Recording starts by itself when you go on track and stops when you leave. `Ctrl-C` when you
 are done.
 
-The recording format is documented in [FORMAT.md](FORMAT.md) — that file is the contract, not
-this one.
+The recording format is documented in [FORMAT.md](FORMAT.md)
 
 ---
 
@@ -32,10 +28,11 @@ this one.
 ```js
 const wf2 = require('wf2-telemetry');
 
+wf2.createSupervisor({ out: 'sessions' });      // run a recording behind a UI
 wf2.shortEnum('SurfaceType', frame.T[0].su);   // 2 -> 'TARMAC'
 wf2.frameOf(packet);                            // PacketMain -> a frame line
 wf2.encodeMain(packet);                         // PacketMain -> a datagram, for tests
-wf2.createSupervisor({ out: 'sessions' });      // run a recording behind a UI
+
 ```
 
 The surface is deliberately narrow — see [lib/index.js](lib/index.js) for what is exported and,
@@ -56,18 +53,7 @@ One path:
 game  --udp-->  SimHub  --forward-->  recorder
 ```
 
-SimHub forwards a copy of each datagram to `127.0.0.1:23124`; the recorder decodes it and sends
-nothing anywhere. It is a **leaf** — nothing downstream of it, nothing depending on it. A tool
-that records a thing should not be able to break the thing it records.
-
-Being a leaf costs no fidelity. Measured against a real 41.6 s session, the forward delivers the
-game's own tick intact — **62.5 Hz, a 16 ms gap on 2598 of 2599 frames**, one 32 ms gap, nothing
-larger. SimHub passes the datagrams straight through rather than resampling at its own rate. It
-also works below the level of whatever SimHub's reader chooses to publish, so it survives a
-SimHub that stops exposing `Raw`.
-
-`verify.js` watches the machine's UDP traffic while a real recorder runs and fails if a single
-datagram leaves it, so "leaf" is a property that is checked rather than a claim in a README.
+SimHub forwards a copy of each datagram to `127.0.0.1:23124`; the recorder decodes it.
 
 ### When nothing arrives
 
@@ -76,33 +62,12 @@ the socket, the recorder reads `PluginsData\GameSettings.json` and names the lik
 
 Only after a silence, never as a precondition: SimHub holds its configuration in memory and
 writes that file on exit, so it lags the running program and cannot predict whether the feed
-works — checked at startup it announced "no port is set" on a machine that was receiving
-forwarded packets at that moment. It also stays quiet unless the settings *positively* disagree.
-See [lib/simhub-config.js](lib/simhub-config.js).
+works.
 
 ### Why the game is not read directly
 
-Because it will not allow a second listener, and finding that out cost a broken telemetry feed.
-SimHub *forwarding* to a second listener is a different thing, and it is what this uses.
+Because it will not allow a second listener. Wreckfest 2's `telemetry/config.json` has a `udp` key holding a JSON **array**, which reads as an invitation to add a second target alongside SimHub's. It is not. This build accepts exactly one entry: given two, the game rejects the file on launch and rewrites it from a default with `"enabled": 0` — silently disabling telemetry for SimHub as well. Editing the fields of the existing single entry does stick; adding to the array does not.
 
-Wreckfest 2's `telemetry/config.json` has a `udp` key holding a JSON **array**, which reads as
-an invitation to add a second target alongside SimHub's. It is not. This build accepts exactly
-one entry: given two, the game rejects the file on launch and rewrites it from a default with
-`"enabled": 0` — silently disabling telemetry for SimHub as well. Editing the fields of the
-existing single entry does stick; adding to the array does not.
-
-```bash
-node tools/telemetry.js            # show the current state
-node tools/telemetry.js --enable   # repair a feed disabled this way
-node tools/telemetry.js --simhub   # point it back at SimHub, if an old --forward moved it
-```
-
-### Two paths that were removed
-
-The game feeding the recorder, which relayed onward to SimHub (`--source udp`), and polling
-SimHub's HTTP API (`--source api`). Both worked; both put something downstream of the recorder,
-and the API also read a view SimHub *chooses* to publish rather than the datagram itself. The
-reasoning is in the commit that removed them, `a462892`.
 
 ### The packet layout is not guessed
 
