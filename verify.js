@@ -18,7 +18,10 @@ const path = require('path');
 const dgram = require('dgram');
 
 const packet = require('./lib/packet');
-const { frameOf, sessionHeaderOf, FORMAT_VERSION } = require('./lib/frame');
+const {
+  frameOf, sessionHeaderOf, FORMAT_VERSION,
+  carsOf, posOf, progOf, stateOf, occupiedCount, ST_FIELDS,
+} = require('./lib/frame');
 const { createSupervisor } = require('./lib/supervisor');
 const { createForwarder } = require('./tools/mock-forward');
 const fixture = require('./tools/fixture');
@@ -153,6 +156,183 @@ check('format: the session header states which format it is', () => {
   return typeof h.v === 'number' ? true : `v is ${typeof h.v}`;
 });
 
+check('format: the version is 2, pinned', () => {
+  // Deliberately a literal rather than a comparison against the writer, which is what the
+  // check above already does and which passes no matter what the writer says. Format 2
+  // interleaves line types a format 1 reader would parse as frames, so the number is a
+  // promise to every reader in another repository — it should not be able to drift silently.
+  return FORMAT_VERSION === 2 ? true : `FORMAT_VERSION is ${FORMAT_VERSION}`;
+});
+
+check('format: the header says which slot the player is', () => {
+  const h = sessionHeaderOf(fixture.packets().next().value, new Date('2026-08-07T12:00:00Z'));
+  return typeof h.playerIndex === 'number'
+    ? true
+    : `playerIndex is ${JSON.stringify(h.playerIndex)} — a reader cannot find itself on the grid`;
+});
+
+// =========================================================================================
+// the participant packets
+// =========================================================================================
+
+check('participants: every type round-trips through the wire', () => {
+  const p = fixture.participantsAt(fixture.GRID_FORMS_AT + 5);
+  const cases = [[1, p.lb], [2, p.tm], [3, p.sec], [4, p.mot], [5, p.info]];
+  for (const [type, items] of cases) {
+    const buf = packet.encodeParticipants(type, items, { raceTime: 12345 }, 0);
+    const got = packet.decodeParticipants(buf);
+    if (!got) return `type ${type} did not decode`;
+    if (got.type !== type) return `type ${type} decoded as ${got.type}`;
+    if (got.raceTime !== 12345) return `type ${type} lost raceTime: ${got.raceTime}`;
+    if (got.items.length !== packet.PARTICIPANT_SLOTS) return `type ${type} gave ${got.items.length} slots`;
+  }
+  return true;
+});
+
+check('participants: a decoder given MAIN says so rather than guessing', () =>
+  packet.decodeParticipants(packet.encodeMain(fixture.packets().next().value)) === null
+    ? true
+    : 'decodeParticipants accepted a MAIN datagram');
+
+check('participants: names and ids survive the fixed-width string fields', () => {
+  const p = fixture.participantsAt(fixture.GRID_FORMS_AT + 5);
+  const got = packet.decodeParticipants(packet.encodeParticipants(5, p.info, { raceTime: 1 }, 0));
+  const me = got.items[fixture.PLAYER_SLOT];
+  if (me.playerName !== fixture.CAR.driver) return `player name came back ${JSON.stringify(me.playerName)}`;
+  if (me.participantIndex !== fixture.PLAYER_SLOT) return `player index came back ${me.participantIndex}`;
+  return true;
+});
+
+check('participants: the empty-slot sentinel is "none", not ""', () => {
+  // The bug this pins cost a whole race: read as a driver, the placeholder makes every slot
+  // appear to change hands the instant the grid forms, and the player unfindable.
+  const before = fixture.participantsAt(0).info;
+  const after = fixture.participantsAt(fixture.GRID_FORMS_AT).info;
+  if (!packet.isEmptyParticipant(before[0])) return 'a pre-grid slot was not recognised as empty';
+  if (packet.isEmptyParticipant(after[0])) return 'a real driver was mistaken for an empty slot';
+  return packet.isEmptyParticipant({ playerName: '', carId: '' }) ? true : 'an empty carId is empty too';
+});
+
+check('format: a roster of nothing but placeholders is no roster', () => {
+  const p = fixture.participantsAt(0);
+  return carsOf(0, p.info, p.mot) === null ? true : 'carsOf built a roster out of empty slots';
+});
+
+check('format: the roster names the grid and sizes to it', () => {
+  const p = fixture.participantsAt(fixture.GRID_FORMS_AT + 1);
+  const rec = carsOf(500, p.info, p.mot);
+  if (!rec || rec._ !== 'cars') return 'no roster';
+  const filled = rec.P.filter(Boolean);
+  if (filled.length !== fixture.GRID) return `roster holds ${filled.length}, grid is ${fixture.GRID}`;
+  if (rec.P[fixture.PLAYER_SLOT][0] !== fixture.CAR.driver) return 'the player is not in their own slot';
+  if (rec.P[0][3] !== 180) return `extents did not come through: ${rec.P[0][3]}`;
+  return true;
+});
+
+check('format: occupancy comes from the leaderboard, not the array length', () => {
+  const p = fixture.participantsAt(fixture.GRID_FORMS_AT + 1);
+  const n = occupiedCount(p.lb);
+  return n === fixture.GRID ? true : `counted ${n} of ${fixture.SLOTS} as occupied, expected ${fixture.GRID}`;
+});
+
+check('format: a state line elides slots that did not change', () => {
+  const prev = [];
+  const at = (i) => {
+    const p = fixture.participantsAt(i);
+    return stateOf(i, p.lb, p.tm, p.sec, occupiedCount(p.lb), prev);
+  };
+  const first = at(fixture.HURT_AT - 5);
+  if (!first || first.P.filter(Boolean).length !== fixture.GRID) return 'the first state line should carry every car';
+  if (at(fixture.HURT_AT - 4) !== null) return 'an unchanged tick still wrote a state line';
+
+  const hurt = at(fixture.HURT_AT);
+  if (!hurt) return 'the health drop wrote no state line';
+  const rows = hurt.P.filter(Boolean).length;
+  if (rows !== 1) return `one car changed but ${rows} rows were written`;
+  const health = hurt.P[4][ST_FIELDS.indexOf('health')];
+  return health === 65 ? true : `the changed row says health ${health}`;
+});
+
+check('format: state rows are positional, and ST_FIELDS is the key to them', () => {
+  const p = fixture.participantsAt(fixture.LAPPED_AT + 1);
+  const rec = stateOf(1, p.lb, p.tm, p.sec, occupiedCount(p.lb), []);
+  const row = rec.P[0];
+  if (row.length !== ST_FIELDS.length) return `row is ${row.length} long, ST_FIELDS is ${ST_FIELDS.length}`;
+  if (row[ST_FIELDS.indexOf('lapTimeLast')] !== 61000) return 'lapTimeLast is not where ST_FIELDS says';
+  if (row[ST_FIELDS.indexOf('position')] !== fixture.RACE_ORDER[0]) return 'position is not where ST_FIELDS says';
+  return true;
+});
+
+check('format: positions carry orientation, not just a point', () => {
+  const p = fixture.participantsAt(fixture.GRID_FORMS_AT + 1);
+  const rec = posOf(7, p.mot, fixture.GRID);
+  if (rec._ !== 'pos' || rec.t !== 7) return 'wrong record';
+  if (rec.P.length !== fixture.GRID) return `sized ${rec.P.length}, expected ${fixture.GRID}`;
+  // 3 position + 4 quaternion + speed. Without the quaternion a replay draws dots, not cars.
+  return rec.P.every((r) => r && r.length === 8) ? true : 'a row is not 8 wide';
+});
+
+// =========================================================================================
+// telling a bot from a person
+//
+// What `--no-bots` rests on. The failure worth catching is not that a bot survives — that
+// costs a few hundred KB — but that a PERSON is dropped, which deletes a car from a
+// recording of a session that cannot be driven again and leaves a file in which nothing
+// looks wrong. So the checks below are mostly about what must NOT be called a bot.
+// =========================================================================================
+
+check('bots: a driver is AI only when both markers say so', () => {
+  const bot = packet.botMarkers({ playerName: '*BOT 19', carId: 'car02:ai_1' });
+  if (!bot.bot) return 'a *BOT with an :ai_ carId was not recognised';
+  const human = packet.botMarkers({ playerName: 'Varteix', carId: 'car04:default' });
+  if (human.bot || human.disagree) return 'a person was flagged';
+
+  // Either marker alone is a convention this package guessed at, and a patch can move one.
+  // A slot the two disagree about is recorded, and the disagreement is reported.
+  const byNameOnly = packet.botMarkers({ playerName: '*BOT 4', carId: 'car02:default' });
+  if (byNameOnly.bot) return 'the name alone was enough to drop a car';
+  if (!byNameOnly.disagree) return 'a one-sided marker was not reported as a disagreement';
+  const byCarOnly = packet.botMarkers({ playerName: 'Varteix', carId: 'car02:ai_1' });
+  if (byCarOnly.bot) return 'the carId alone was enough to drop a car';
+
+  // An empty slot is not a bot. It is not anything, and calling it one would make the
+  // pre-grid packets — every slot blank — look like a grid of AI.
+  return packet.botMarkers({ playerName: '', carId: 'none' }).bot ? 'an empty slot read as AI' : true;
+});
+
+check('format: the header says whether the AI was recorded', () => {
+  const m = fixture.packets().next().value;
+  const at = new Date('2026-08-07T12:00:00Z');
+  if (sessionHeaderOf(m, at).bots !== true) return 'the default header does not say the grid was recorded whole';
+  if (sessionHeaderOf(m, at, {}).bots !== true) return 'an options object with nothing in it changed the answer';
+  if (sessionHeaderOf(m, at, { bots: false }).bots !== false) return '--no-bots was not recorded in the header';
+  // The grid that raced, not the grid that was recorded. Without this a filtered recording
+  // is indistinguishable from a session driven alone.
+  return sessionHeaderOf(m, at, { bots: false }).gridSize === 24 ? true : 'gridSize followed the filter';
+});
+
+check('format: a dropped slot is null everywhere and keeps its index', () => {
+  const p = fixture.participantsAt(fixture.LAPPED_AT + 1);
+  const n = occupiedCount(p.lb);
+  const drop = new Set([0, 1, 3, 4, 5]); // everyone but the player, who is slot 2
+  const kept = fixture.PLAYER_SLOT;
+
+  const rows = [
+    ['cars', carsOf(1, p.info, p.mot, drop).P],
+    ['pos', posOf(1, p.mot, n, drop).P],
+    ['prg', progOf(1, p.tm, n, drop).P],
+    ['st', stateOf(1, p.lb, p.tm, p.sec, n, [], drop).P],
+  ];
+  for (const [name, P] of rows) {
+    const filled = P.map((r, i) => (r ? i : -1)).filter((i) => i >= 0);
+    if (filled.length !== 1 || filled[0] !== kept) return `${name} kept slots ${filled.join(', ')}`;
+    // Sized to the grid, not compacted onto the survivors: index i must go on meaning the
+    // same car, in this record type and in every other.
+    if (name !== 'cars' && P.length !== n) return `${name} was resized to ${P.length}, not ${n}`;
+  }
+  return true;
+});
+
 // =========================================================================================
 // the recorder, end to end
 //
@@ -187,7 +367,7 @@ async function recording(opts) {
   const rec = createSupervisor({ out: recDir, udpPort: port });
   // repeat: 2 sends every frame twice, so the recorder's rule that the clock must ADVANCE
   // rather than merely differ is exercised instead of bypassed.
-  const fwd = createForwarder({ port, hz: (opts && opts.hz) || 250, repeat: 2 });
+  const fwd = createForwarder({ port, hz: (opts && opts.hz) || 250, repeat: 2, grid: !!(opts && opts.grid) });
   return { port, rec, fwd, start: () => { const r = rec.start(); fwd.start(); return r; } };
 }
 
@@ -210,6 +390,136 @@ function until(rec, want, ms) {
 }
 
 let recorded = null;
+
+// =========================================================================================
+// the other cars, end to end
+//
+// A real record.js child on a real socket, fed MAIN and the four participant packets
+// interleaved the way the game sends them. What this catches that the unit checks above
+// cannot: the recorder opening a file off a participant packet and having no header to
+// write, opponent lines landing in a file that a reader then takes for frames, and the
+// arrays being sized from the 36-slot wire array instead of the grid.
+// =========================================================================================
+
+checkAsync('a recording carries the rest of the grid, not just the player', async () => {
+  // Its own directory. The checks below count the files in recDir and assert there is
+  // exactly one, which is a real thing to assert — so this must not leave a second there.
+  const gridDir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf2-grid-'));
+  const port = await freePort();
+  const rec = createSupervisor({ out: gridDir, udpPort: port });
+  const fwd = createForwarder({ port, hz: 400, repeat: 2, grid: true });
+  const started = rec.start();
+  fwd.start();
+  if (started.error) return started.error;
+
+  // Far enough in that the grid has formed, a lap has completed and one car has been hurt —
+  // before any of that the roster is all placeholders and nothing has changed to elide.
+  const writing = await until(rec, (s) => s.state === 'recording' && s.frames > fixture.HURT_AT + 20, 25000);
+  const reached = rec.status().frames;
+  await rec.stop();
+  fwd.stop();
+  if (!writing) return `only reached ${reached} frames of the ${fixture.HURT_AT + 20} needed`;
+
+  const files = fs.readdirSync(gridDir).filter((f) => f.endsWith('.jsonl')).map((f) => path.join(gridDir, f));
+  if (!files.length) return 'no recording was written';
+  const recs = fs.readFileSync(files[0], 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+
+  const header = recs[0];
+  const frames = recs.filter((r) => r._ === undefined);
+  const by = (k) => recs.filter((r) => r._ === k);
+
+  if (header._ !== 'session') return 'first line is not a session header';
+  if (header.v !== 2) return `header says v=${header.v}`;
+  if (header.playerIndex !== fixture.PLAYER_SLOT) return `header playerIndex is ${header.playerIndex}`;
+  if (!frames.length) return 'the player frames stopped being written';
+  if (frames.some((f) => f.T === undefined)) return 'a player frame lost its tyres';
+
+  const roster = by('cars');
+  if (!roster.length) return 'no roster was written';
+  // Written on change, and the grid forms once — a roster per INFO packet means the
+  // recorder is not comparing, and the file grows by 8 KB a second for nothing.
+  if (roster.length > 2) return `${roster.length} rosters written for one grid`;
+  const cars = roster[roster.length - 1].P;
+  if (cars.filter(Boolean).length !== fixture.GRID) return `roster holds ${cars.filter(Boolean).length} cars`;
+  if (cars[fixture.PLAYER_SLOT][0] !== fixture.CAR.driver) return 'the player is not in the slot the header names';
+  if (cars.filter(Boolean).some((c) => /none/i.test(c[2]))) return 'the empty-slot placeholder was recorded as a driver';
+
+  const pos = by('pos'), prg = by('prg'), st = by('st');
+  if (!pos.length) return 'no positions were recorded';
+  if (pos.some((r) => r.P.length !== fixture.GRID)) return 'a position line was sized to the wire array, not the grid';
+  if (pos.some((r) => r.P.some((row) => !row || row.length !== 8))) return 'a position row is not 8 wide';
+  if (!prg.length) return 'no lap progress was recorded';
+
+  // The whole point of the on-change encoding. If `st` tracks `prg` the elision is broken
+  // and the file is twice the size it needs to be.
+  if (!st.length) return 'no state lines at all — the grid never changed?';
+  if (st.length > prg.length / 5) return `${st.length} state lines against ${prg.length} progress lines — nothing is being elided`;
+  const hurt = st.some((s) => (s.P[4] || [])[ST_FIELDS.indexOf('health')] === 65);
+  if (!hurt) return 'the car that lost health never appeared in a state line';
+
+  // Every record carries the raceTime off its own packet header — that is the only thing a
+  // reader can join them on, because the streams are not 1:1.
+  if (recs.slice(1).some((r) => typeof r.t !== 'number')) return 'a record has no raceTime';
+  if (!keep) fs.rmSync(gridDir, { recursive: true, force: true });
+  return true;
+});
+
+checkAsync('--no-bots keeps the people on the grid and drops the AI', async () => {
+  // The fixture grid is one person in slot 2 and five bots, each carrying both markers. A
+  // recorder that filtered on nothing would keep six; one that filtered on everything, or
+  // that never opened its gate, would keep none. Neither passes.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wf2-nobots-'));
+  const port = await freePort();
+  const rec = createSupervisor({ out: dir, udpPort: port });
+  const fwd = createForwarder({ port, hz: 400, repeat: 2, grid: true });
+  const started = rec.start({ bots: false });
+  fwd.start();
+  if (started.error) return started.error;
+
+  const writing = await until(rec, (s) => s.state === 'recording' && s.frames > fixture.HURT_AT + 20, 25000);
+  const reached = rec.status().frames;
+  await rec.stop();
+  fwd.stop();
+  if (!writing) return `only reached ${reached} frames of the ${fixture.HURT_AT + 20} needed`;
+
+  const files = fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
+  if (files.length !== 1) return `${files.length} recordings written, expected 1`;
+  const recs = fs.readFileSync(path.join(dir, files[0]), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+
+  const header = recs[0];
+  if (header.bots !== false) return `the header says bots=${JSON.stringify(header.bots)}`;
+  // A filtered recording and a session driven alone look identical without this.
+  if (header.gridSize !== 24) return `gridSize followed the filter: ${header.gridSize}`;
+  if (!recs.some((r) => r._ === undefined)) return 'the player frames stopped being written';
+
+  const others = recs.filter((r) => r._ !== undefined && r._ !== 'session');
+  if (!others.length) return 'nothing about the other cars was recorded at all';
+  // The gate. Only the roster carries names, so a line written before one arrived would be a
+  // line nothing could have classified — a bot recorded by a recorder asked not to.
+  if (others[0]._ !== 'cars') return `the first participant line is a ${others[0]._}, written before any roster`;
+
+  const roster = others.filter((r) => r._ === 'cars');
+  const cars = roster[roster.length - 1].P;
+  const kept = cars.map((c, i) => (c ? i : -1)).filter((i) => i >= 0);
+  if (kept.length !== 1 || kept[0] !== fixture.PLAYER_SLOT) return `the roster kept slots [${kept.join(', ')}]`;
+  if (cars[fixture.PLAYER_SLOT][0] !== fixture.CAR.driver) return 'the driver kept is not the person';
+
+  // Every other line type has to agree with the roster. A `pos` for a car with no name in
+  // the roster is a replay drawing a ghost.
+  for (const r of others) {
+    if (r._ === 'cars') continue;
+    const filled = r.P.map((row, i) => (row ? i : -1)).filter((i) => i >= 0);
+    if (filled.some((i) => i !== fixture.PLAYER_SLOT)) return `a ${r._} line carries slots [${filled.join(', ')}]`;
+  }
+  // And the person must actually be IN them — everything above also passes for a recorder
+  // that dropped the whole grid.
+  for (const type of ['pos', 'prg', 'st']) {
+    if (!others.some((r) => r._ === type && r.P[fixture.PLAYER_SLOT])) return `no ${type} line carries the player`;
+  }
+
+  if (!keep) fs.rmSync(dir, { recursive: true, force: true });
+  return true;
+});
 
 checkAsync('a recording starts, writes frames, and reports them as it goes', async () => {
   const { rec, fwd, start } = await recording();
@@ -488,7 +798,7 @@ function finish() {
     for (const f of failures) console.log(`  x  ${f}\n`);
     process.exit(1);
   }
-  console.log(`  ${passed} checks passed — codec, capture, the recorder as a leaf, how a silence is diagnosed, format version, recorder lifecycle`);
+  console.log(`  ${passed} checks passed — codec, participants, capture, the recorder as a leaf, how a silence is diagnosed, format version, the grid end to end, recorder lifecycle`);
 }
 
 (async () => {

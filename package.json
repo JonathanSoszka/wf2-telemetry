@@ -1,11 +1,12 @@
 {
   "name": "wf2-telemetry",
-  "version": "2.1.0",
-  "description": "Wreckfest 2 telemetry capture — records a session to a .jsonl log from SimHub's UDP forward",
+  "version": "3.0.0",
+  "description": "Wreckfest 2 telemetry capture — records a session, and everyone else on the grid, to a .jsonl log from SimHub's UDP forward",
   "main": "lib/index.js",
   "bin": {
     "wf2-record": "record.js",
-    "wf2-telemetry-config": "tools/telemetry.js"
+    "wf2-telemetry-config": "tools/telemetry.js",
+    "wf2-trackmap": "tools/trackmap.js"
   },
   "files": [
     "record.js",

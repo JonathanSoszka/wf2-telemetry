@@ -21,7 +21,20 @@
 //   node record.js                       # listen on udp/23124
 //   node record.js --udp-port 23125      # somewhere else
 //   node record.js --out D:\somewhere
+//   node record.js --no-bots             # record the people on the grid, not the AI
 //   node record.js --supervised          # driven by another program, not a terminal
+//
+// IGNORING THE BOTS
+//
+// The other cars are most of a recording — a full grid costs several times what the player's
+// own frames do — and on an offline grid almost all of them are the game's AI. `--no-bots`
+// leaves those slots out. What it does NOT do is change anything about the player's frames,
+// which is where every number in an analysis comes from; the choice is only about how much
+// of the race around them is kept.
+//
+// It is a decision made at capture time and it cannot be undone afterwards, so the rule it
+// follows is that a slot is dropped only when it can be POSITIVELY identified as AI — see
+// `botMarkers` in lib/packet.js for the two markers and why both have to agree.
 //
 // SUPERVISED MODE
 //
@@ -40,12 +53,13 @@
 const fs = require('fs');
 const path = require('path');
 const dgram = require('dgram');
-const { decodeMain, packetTypeOf } = require('./lib/packet');
-const { frameOf, sessionHeaderOf } = require('./lib/frame');
+const { decodeMain, decodeParticipants, packetTypeOf, isEmptyParticipant, botMarkers } = require('./lib/packet');
+const { frameOf, sessionHeaderOf, carsOf, posOf, progOf, stateOf, occupiedCount } = require('./lib/frame');
 const { forwardStatus } = require('./lib/simhub-config');
 
 const DEFAULTS = {
   udpPort: 23124,
+  bots: true, // record the whole grid; --no-bots keeps only the drivers who are people
 };
 
 /**
@@ -65,6 +79,7 @@ function parseArgs(argv) {
     const v = argv[i];
     if (v === '--out') a.out = argv[++i];
     else if (v === '--udp-port') a.udpPort = Number(argv[++i]);
+    else if (v === '--no-bots') a.bots = false;
     else if (v === '--supervised') a.supervised = true;
   }
   return a;
@@ -102,6 +117,81 @@ function createWriter(args) {
   let idleSince = Date.now();
   let warnedIdle = false;
 
+  // --- the other cars ---------------------------------------------------------------------
+  // The participant packets arrive on the same socket as MAIN, interleaved and at their own
+  // rates. They are held here until a set with a MATCHING raceTime is complete, because
+  // leaderboard, timing and sectors are three datagrams describing one instant and pairing
+  // them by arrival order would attribute one car's lap time to another the first time one
+  // went missing. Motion and progress stand alone and are written the moment they land.
+  let held = { lb: null, tm: null, sec: null }; // each { t, items }
+  let stPrev = [];                 // last row written per slot, for unchanged-slot elision
+  let rosterKey = null;            // the roster as last written, so it is written only on change
+  let lastMotion = null;           // extents for the roster come from here
+  let cars = 0, posLines = 0;      // counters for the summary
+  const lastT = {};                // per record type, to drop repeated datagrams
+
+  // --- who is a bot -----------------------------------------------------------------------
+  // Only INFO carries names, so until one has arrived nothing can be told apart. Under
+  // --no-bots that is a REASON TO WRITE NOTHING rather than a reason to write everything:
+  // the header will say the AI was left out, and a second of opponent lines at the front of
+  // the file that quietly contradicts it is worse than the second of data is worth.
+  let botSlots = null;             // slot indices positively identified as AI
+  let rosterSeen = false;          // an INFO packet with an actual grid in it has arrived
+  let gatedSince = 0, warnedNoRoster = false;
+  // Not reset between files: the markers disagreeing is a fact about this build of the game,
+  // and repeating it at every restart would bury it.
+  let warnedDisagree = false;
+
+  /** Read the roster: how many cars, which are AI, and whether the two markers still agree. */
+  function classify(info) {
+    const bots = new Set();
+    let occupied = 0, disagree = 0;
+    for (let i = 0; i < info.length; i++) {
+      if (isEmptyParticipant(info[i])) continue;
+      occupied++;
+      const mk = botMarkers(info[i]);
+      if (mk.bot) bots.add(i);
+      else if (mk.disagree) disagree++;
+    }
+    if (!occupied) return; // pre-grid: every slot still reads "none"
+
+    botSlots = bots;
+    rosterSeen = true;
+
+    // Said when it happens, not left for whoever opens the file. A recording asked to skip
+    // the AI and containing a full grid anyway is not obviously wrong from the outside.
+    if (disagree && !warnedDisagree && !args.bots) {
+      warnedDisagree = true;
+      const why =
+        `${disagree} of ${occupied} cars carry only one of the two AI markers, so they were ` +
+        `recorded rather than dropped. See botMarkers in lib/packet.js.`;
+      log(`\n  ${why}`);
+      event({ state: 'bot-markers', note: why, disagree });
+    }
+  }
+
+  /** Write one participant record, dropping a repeat of an instant already recorded. */
+  function emit(rec) {
+    if (!rec || !stream) return false;
+    if (lastT[rec._] !== undefined && rec.t <= lastT[rec._]) return false;
+    lastT[rec._] = rec.t;
+    stream.write(JSON.stringify(rec) + '\n');
+    return true;
+  }
+
+  function resetParticipants() {
+    held = { lb: null, tm: null, sec: null };
+    stPrev = [];
+    rosterKey = null;
+    lastMotion = null;
+    cars = 0; posLines = 0;
+    // The grid re-forms for the next session, so who is a bot is established again rather
+    // than carried across — the slots are not promised to hold the same drivers.
+    botSlots = null; rosterSeen = false;
+    gatedSince = 0; warnedNoRoster = false;
+    for (const k of Object.keys(lastT)) delete lastT[k];
+  }
+
   /**
    * Finish the current file.
    *
@@ -118,11 +208,17 @@ function createWriter(args) {
     const closing = stream;
     const name = path.basename(file);
     const n = frames;
+    const nCars = cars;
+    const nSkipped = botSlots && !args.bots ? botSlots.size : 0;
     stream = null; file = null; frames = 0; lastRaceTime = null;
+    resetParticipants();
 
     closing.end(() => {
-      log(`\n  closed ${name} — ${n} frames`);
-      event({ state: 'closed', file: name, frames: n });
+      log(
+        `\n  closed ${name} — ${n} frames` + (nCars ? `, ${nCars} cars` : '') +
+        (nSkipped ? ` (${nSkipped} AI driver${nSkipped === 1 ? '' : 's'} not recorded)` : '')
+      );
+      event({ state: 'closed', file: name, frames: n, cars: nCars, botsSkipped: nSkipped });
       finish();
     });
   }
@@ -132,10 +228,11 @@ function createWriter(args) {
     const safe = (m.session.trackName || 'unknown').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
     file = path.join(args.out, `${stamp(now)}_${safe}.jsonl`);
     stream = fs.createWriteStream(file, { flags: 'a' });
-    stream.write(JSON.stringify(sessionHeaderOf(m, now)) + '\n');
+    stream.write(JSON.stringify(sessionHeaderOf(m, now, { bots: args.bots })) + '\n');
     log(
       `\n  recording -> ${path.basename(file)}\n` +
-      `    ${m.session.trackName} · ${m.participantPlayerInfo.carName} · ${m.session.laps} laps`
+      `    ${m.session.trackName} · ${m.participantPlayerInfo.carName} · ${m.session.laps} laps` +
+      (args.bots ? '' : `\n    AI drivers are not being recorded (--no-bots)`)
     );
     event({
       state: 'recording',
@@ -144,6 +241,7 @@ function createWriter(args) {
       carName: m.participantPlayerInfo.carName,
       laps: m.session.laps,
       frames: 0,
+      bots: args.bots,
     });
   }
 
@@ -230,6 +328,85 @@ function createWriter(args) {
         }
       }
     },
+
+    /**
+     * Feed one decoded participant packet — everyone else on the grid.
+     *
+     * DELIBERATELY DOES NOT OPEN A FILE. Only MAIN decides that a session is running, because
+     * only MAIN carries the status flags that say the player is on track and the track/car
+     * identity a file is named and segmented by. Participant packets arriving before the
+     * first qualifying MAIN are dropped rather than starting a recording of a menu — they
+     * keep coming through loading screens, and a session opened by one would have no header
+     * to write.
+     */
+    pushParticipants(p) {
+      if (!stream) return;
+
+      // Both of these happen even while nothing is being written, and for the same reason:
+      // they are what makes writing possible. INFO is the only packet that says who is a
+      // bot, and the roster's extents are read off the last motion packet.
+      if (p.type === 4) lastMotion = p.items;
+      if (p.type === 5) classify(p.items);
+
+      // --no-bots and no roster yet: nothing here can be told apart, so nothing is kept.
+      if (!args.bots && !rosterSeen) {
+        if (!gatedSince) gatedSince = Date.now();
+        // A grid that never announces itself would otherwise be a recording with no other
+        // cars in it at all, and no indication that any were dropped for want of names.
+        if (!warnedNoRoster && Date.now() - gatedSince > 15000) {
+          warnedNoRoster = true;
+          const why =
+            `The other cars are arriving, but no roster (PARTICIPANTS_INFO) has, so bots ` +
+            `cannot be told from people and none of them are being recorded. Drop --no-bots ` +
+            `to record the grid as it arrives.`;
+          log(`\n  ${why}`);
+          event({ state: 'no-roster', note: why });
+        }
+        return;
+      }
+
+      // The grid size comes from the leaderboard, which is the only packet that says which
+      // slots hold a car. Nothing per-slot can be sized until one has arrived. The width is
+      // the grid that RACED — dropped slots stay in place as nulls, so an index still means
+      // the same car in every record.
+      const width = () => (held.lb ? occupiedCount(held.lb.items) : 0);
+      const drop = args.bots ? null : botSlots;
+
+      switch (p.type) {
+        case 4: { // MOTION — positions, the bulk of the file and all a replay strictly needs
+          const n = width();
+          if (n && emit(posOf(p.raceTime, p.items, n, drop))) posLines++;
+          return;
+        }
+        case 2: // TIMING — its moving parts go straight out, the rest is held for `st`
+          held.tm = { t: p.raceTime, items: p.items };
+          if (width()) emit(progOf(p.raceTime, p.items, width(), drop));
+          break;
+        case 1: held.lb = { t: p.raceTime, items: p.items }; break; // LEADERBOARD
+        case 3: held.sec = { t: p.raceTime, items: p.items }; break; // SECTORS
+        case 5: { // INFO — the roster, ~1 Hz, written only when it changes
+          const rec = carsOf(p.raceTime, p.items, lastMotion, drop);
+          if (!rec) return; // every slot still reads "none": the grid has not formed yet
+          const k = JSON.stringify(rec.P);
+          if (k === rosterKey) return;
+          rosterKey = k;
+          cars = rec.P.filter(Boolean).length;
+          emit(rec);
+          return;
+        }
+        default: return; // 6 = DAMAGE, decoded but deliberately not recorded
+      }
+
+      // `st` is only written once leaderboard, timing and sectors all describe the SAME
+      // INSTANT. They ship as a group — over a full race each arrived 12324 times, exactly —
+      // but pairing them on arrival order instead of raceTime would graft one car's lap times
+      // onto another the first time one went missing, and that yields a plausible report
+      // rather than an obvious fault. Being strict costs at most one skipped tick.
+      if (!held.lb || !held.tm || !held.sec) return;
+      if (held.lb.t !== held.tm.t || held.lb.t !== held.sec.t) return;
+      emit(stateOf(held.lb.t, held.lb.items, held.tm.items, held.sec.items, width(), stPrev, drop));
+    },
+
     close,
   };
 }
@@ -251,10 +428,17 @@ function runUdp(args, writer) {
     const type = packetTypeOf(buf);
     if (type === null) return;
     if (!sawAny) { sawAny = true; log('  telemetry detected — packets are arriving'); }
-    if (type !== 0) return; // participant packets share the port
 
-    const m = decodeMain(buf);
-    if (m) writer.push(m);
+    if (type === 0) {
+      const m = decodeMain(buf);
+      if (m) writer.push(m);
+      return;
+    }
+
+    // The other six types share this port and used to be dropped here. MAIN still decides
+    // when a session is running; these only fill in who else was on track while it was.
+    const p = decodeParticipants(buf);
+    if (p) writer.pushParticipants(p);
   });
 
   sock.on('error', (e) => {
@@ -301,9 +485,10 @@ function runUdp(args, writer) {
     log(`Wreckfest 2 session recorder`);
     log(`  source      udp/${args.udpPort}, forwarded by SimHub`);
     log(`  writing to  ${args.out}`);
+    log(`  other cars  ${args.bots ? 'the whole grid' : 'people only — AI drivers are skipped (--no-bots)'}`);
     log(`\n  SimHub does not depend on this process — it keeps its own feed either way.`);
     log(`  Waiting for a session. Start a race — Ctrl-C when you are done.`);
-    event({ state: 'waiting', out: args.out });
+    event({ state: 'waiting', out: args.out, bots: args.bots });
   });
 
   return () => {

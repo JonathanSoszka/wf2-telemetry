@@ -1,15 +1,20 @@
 # The `.jsonl` recording format
 
-**Format version 1.**
+**Format version 2.** Version 1 was the player alone; version 2 adds the rest of the grid.
+The rules below apply to both, and the added line types are described under "The other cars".
 
 This is the contract between whatever writes a recording and whatever reads one. It used to
 be enforced by the two living in the same repository; now it is enforced by being written
 down.
 
 A recording is a UTF-8 text file of newline-terminated JSON objects. The **first line is a
-session header**; every line after it is a **frame**. There is no trailing structure, no
-index, and no footer — a recording that was cut off mid-write is still a valid recording of
-everything before the cut, which is deliberate.
+session header**. After it, a line with **no `_` key is a player frame**, and a line **with**
+one is a participant record — see "The other cars". In format 1 there were no participant
+records, so every line after the header was a frame; code written against that assumption is
+exactly what the version bump exists to stop.
+
+There is no trailing structure, no index, and no footer — a recording that was cut off
+mid-write is still a valid recording of everything before the cut, which is deliberate.
 
 Keys are short because a race is tens of thousands of frames and the key names would
 otherwise be most of the file.
@@ -44,11 +49,13 @@ One object, first line, `_` is always `"session"`.
 | `trackName` | Display name |
 | `trackLength` | Metres |
 | `laps` | Laps the session was set to |
-| `gridSize` | Number of cars |
+| `gridSize` | Number of cars **that raced** — not necessarily how many were recorded |
+| `bots` | Were the AI drivers recorded? (format 2) — **absent means yes** |
 | `sectorCount` | Sectors on this track |
 | `sectorFract1`, `sectorFract2` | Sector boundaries as a fraction of the lap |
 | `gameMode`, `damageMode` | Resolved to names, not numbers — `MODE_BANGER`, `MODE_NORMAL` |
 | `carId`, `carName`, `playerName` | Who was driving what |
+| `playerIndex` | Which participant slot is the player (format 2) |
 | `driveline` | `TYPE_FWD` / `TYPE_RWD` / `TYPE_AWD` |
 | `gearMax` | Top gear |
 | `steeringLock` | Radians at full lock |
@@ -126,8 +133,108 @@ a whole file should treat it the same way rather than trying to reconcile the cl
 
 ---
 
+## The other cars — format 2
+
+Format 1 was a header and a stream of frames, all about the player, and a reader could take
+"every line after the first is a frame" as given. **It no longer can.** Format 2 interleaves
+four more line types, each carrying a `_` discriminator. **A line with a `_` is not a frame.
+A reader that does not recognise one must skip it, not parse it.**
+
+That is why this is version 2 rather than an added key: what an existing line *position*
+means has changed. A format 1 reader pointed at a format 2 recording would push an opponent's
+position into its frame list — and because these lines share a `raceTime` with the player
+frame beside them, a reader deduplicating on a non-advancing clock would then discard roughly
+half of what it read. It would not crash. It would produce a shorter, plausible, wrong
+session. Refusing the file on `v` is the only outcome worth having.
+
+Every participant record is `{_, t, P}`:
+
+| Key | Meaning |
+| --- | --- |
+| `_` | `cars`, `pos`, `prg` or `st` |
+| `t` | The `raceTime` off **that packet's own header** — see the joining rule below |
+| `P` | Per-slot array. **The index is the car**, and it means the same car in every record type |
+
+The header gains `playerIndex`: which slot in `P` is the player. Without it a reader has to
+find itself by matching its own name against the roster, which breaks the moment two drivers
+share one — and on a grid of bots called `*BOT 1`..`*BOT 24` that is not far-fetched.
+
+### `cars` — the roster
+
+`P[i]` is `[playerName, carName, carId, extentX, extentY, extentZ]`, or `null` for a slot
+holding nobody. Written when the roster **changes**, which in practice is once, as the grid
+forms. Extents are the car's bounding box; they describe the car rather than its movement, so
+they live here rather than on every position line.
+
+### `pos` — where everyone is
+
+`P[i]` is `[x, y, z, qx, qy, qz, qw, speed]` — world position, orientation quaternion, speed
+in m/s. Written every time a motion packet arrives. This is the bulk of a multi-car recording
+and the only thing a replay strictly needs. The quaternion is the difference between drawing
+cars and drawing dots.
+
+### `prg` — how far round each car is
+
+`P[i]` is `[lapProgress, lapTimeCurrent, deltaAhead, deltaBehind]`. Written every time a
+timing packet arrives. These are kept out of `st` **because they change every tick** — left
+in there they would defeat the elision that makes `st` almost free.
+
+### `st` — the discrete state
+
+`P[i]` is a positional row, and `ST_FIELDS` — exported from this package — is the key to it.
+It carries status, track status, lap, race position, health, wrecks, frags, score, gap to the
+leader, last and best lap, and last/best sector times.
+
+**`null` means unchanged since the previous record of the same type, and a reader carries the
+last value forward.** That is lossless — delta encoding, not sampling — and it is most of the
+difference between 14 MB/min and 7. It elides constantly on `st`, where a car's position and
+health change a handful of times a lap, and never fires on `pos` or `prg`, where every car
+moves every tick.
+
+### The joining rule, which is not optional
+
+**Join on `t`. Never on arrival order, and never by pairing "the next of each".**
+
+The streams are *not* 1:1, and that was measured rather than assumed. Over one 206-second
+race the recorder saw **12903** MAIN packets, **12324** each of leaderboard, timing and
+sectors, and **12198** motion. MAIN keeps arriving outside the session; motion skips ticks.
+
+So a frame may have no `pos` beside it, and a reader has to let that be true — interpolating,
+holding, or refusing as it sees fit — rather than treating the file as malformed. What it must
+not do is take the next `pos` in the file as belonging to the frame above it. That skews every
+car by a tick and yields a replay that looks almost right.
+
+### `bots: false` — a grid recorded without its AI
+
+`record.js --no-bots` keeps the drivers who are people and leaves the game's AI out. The
+slots it drops are written as `null`, in every record type, exactly like a slot nobody is in
+— **there is no per-line marker saying a car was suppressed**, because a reader that had to
+interpret one would be worse off than a reader looking at an emptier grid.
+
+So the header is the only thing that says it happened, and a reader that cares must check it:
+
+* `bots` absent or `true` — the roster is the grid.
+* `bots: false` — the roster is the people on the grid. `gridSize` still reports how many
+  cars raced, so the difference between the two is the AI that was not recorded.
+
+Slot indices are unaffected: a dropped slot keeps its place, and index *i* still means the
+same car in every record. Note that on an `st` line `null` therefore carries two meanings —
+"unchanged since the last one" for a slot that is being recorded, and "not here" for one that
+is not. They cannot be told apart from the line, only from the header, which is why the flag
+is in the header rather than inferred from an empty-looking roster.
+
+### What is deliberately not recorded
+
+`PARTICIPANTS_DAMAGE` arrives and is decoded, and is **not written**. It populates 4 of its 21
+bytes with powers of two — a bitfield of damaged parts, about 0.2 MB/min. That was measured,
+so if it is ever wanted the answer is already known rather than costing another session to
+find out. Per-car `health` is in `st` and is a different thing.
+
+---
+
 ## What is not in a recording
 
-No opponents, no sector times as such, no tyre temperatures or per-part damage — the game
-does not report them. `hp` (overall health) is real. See the README for what Wreckfest 2
-actually populates.
+No tyre temperatures and no per-part damage for the player — the game does not report them.
+`hp` (overall health) is real. See the README for what Wreckfest 2 actually populates.
+
+Opponents were on this list until format 2. They are here now.

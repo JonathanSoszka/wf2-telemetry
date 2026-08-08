@@ -14,10 +14,28 @@ keeps its own feed regardless of whether the recorder is running.
 node record.js                    # listen on 23124, write to ./sessions
 node record.js --out D:\somewhere # Custom write directory
 node record.js --udp-port 23125   # if something else already has 23124
+node record.js --no-bots          # record the people on the grid, not the AI
 ```
 
 Recording starts by itself when you go on track and stops when you leave. `Ctrl-C` when you
 are done.
+
+### `--no-bots`
+
+The rest of the grid is most of a recording, and on an offline grid nearly all of it is the
+game's AI. `--no-bots` leaves those slots out. **Your own frames are untouched** — every
+number an analysis produces comes from those, and this only decides how much of the race
+around them is kept. The header carries `bots: false`, so a reader can tell a filtered
+recording from a session you drove alone.
+
+A slot is dropped only when it can be *positively* identified as AI, which takes two markers
+agreeing: a player name like `*BOT 19` and a car id like `car02:ai_1`. Where they disagree
+the car is recorded and the recorder says so. The asymmetry is the point — keeping a bot
+costs a few hundred KB, and dropping a person deletes a car from a session that will not
+happen again, in a file where nothing then looks wrong.
+
+Names arrive only with the roster, about a second in. Until one has, the recorder writes
+nothing about the other cars rather than writing bots it cannot yet recognise.
 
 **No Node installed?** Releases ship `wf2-record.exe`, which is the same thing with the
 runtime inside it — same flags, no install. See [Release executables](#release-executables).
@@ -179,6 +197,38 @@ createSupervisor({ out, udpPort: 23124, node: 'C:\\...\\wf2-record.exe', script:
 
 ---
 
+## Track maps
+
+`tools/trackmap.js` reads a recording back and derives the shape of the track from it.
+
+```bash
+node tools/trackmap.js sessions/<file>.jsonl --json map.json --svg map.svg
+```
+
+`prog` is the game's own position around the lap, and it is a distance parameter every lap
+shares — so binning position by it and averaging across laps gives a centreline in world
+metres. On top of that the tool reports the surface under the car as contiguous segments
+(these tracks are part tarmac and part gravel, and the recording knows which is which),
+where the car was airborne on all four wheels, the elevation profile, signed curvature, and
+where the sector boundaries fall in the world.
+
+Laps are used or skipped on the distance actually driven against `trackLength`: a lap that
+went off and recovered is long, drags the mean line off the track, and is dropped with a
+reason given. **One clean lap gives you that lap's racing line, not the track** — the summary
+says so when that is all there is.
+
+It does **not** produce a track width, and that is deliberate rather than unfinished. `ts`
+(track status) has been 0 on every frame of every recording so far, kerbs are under 1% of
+tyre samples, and the off-track surfaces that do appear only exist where the driver made a
+mistake — so an edge would mean "wherever someone went off" while looking like a boundary.
+Reconstructing one also needs the car's heading, and a frame does not carry it: the game
+sends an orientation quaternion, the opponent `pos` rows keep it, and `frameOf` writes only
+the three positions. A format 2 recording of a full grid is the better route in — many cars
+tracing many lines give an envelope of driven positions — and this tool reads the player's
+frames only.
+
+---
+
 ## Files
 
 | Path | Purpose |
@@ -190,6 +240,7 @@ createSupervisor({ out, udpPort: 23124, node: 'C:\\...\\wf2-record.exe', script:
 | `lib/simhub-config.js` | Reads SimHub's forward setting, to explain a silence |
 | `lib/frame.js` | The shape of one logged frame, and the format version |
 | `lib/supervisor.js` | Runs one `record.js` child: start, stop, status, events |
+| `tools/trackmap.js` | Derives a track map from a recording — centreline, surface, jumps |
 | `tools/telemetry.js` | Inspects and repairs the game's telemetry config |
 | `tools/mock-forward.js` | A stand-in for SimHub's forward, for testing capture offline |
 | `tools/fixture.js` | The packet stream behind it |
@@ -204,7 +255,11 @@ source.
 
 ## Limits
 
-What the game does not send, this cannot record: no opponent telemetry, no tyre temperatures,
-no per-part damage. Overall car health is real. Everything the packet does carry is captured
-whole — the recorder makes no decisions about what is worth keeping, because whatever is
-dropped at capture time is gone.
+What the game does not send, this cannot record: no tyre temperatures, no per-part damage.
+Overall car health is real, and so is the rest of the grid — position, timing and state for
+every car, though not their inputs or tyres.
+
+Everything the packet carries is recorded whole, and the recorder makes no judgement about
+what is worth keeping, because whatever is dropped at capture time is gone. `--no-bots` is
+the single exception, and it is the shape every exception would have to be: asked for
+explicitly, stated in the header, and refusing to act where it is not certain.

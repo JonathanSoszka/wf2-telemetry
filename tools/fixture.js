@@ -75,6 +75,11 @@ function packetAt(i) {
       carId: CAR.id,
       carName: CAR.name,
       playerName: CAR.driver,
+      // Which participant slot the player occupies. Deliberately not 0 — a recording where
+      // the player happened to be first would let a reader assume it and still pass. Kept
+      // equal to PLAYER_SLOT below, because the header and the roster disagreeing is exactly
+      // the fault this fixture exists to make visible.
+      participantIndex: 2,
       // Non-zero on part of the run so the collision channel is not uniformly empty.
       lastCollisionTime: i > COUNT * 0.6 ? 1000 + Math.floor(COUNT * 0.6) * TICK_MS : 0,
     },
@@ -150,4 +155,89 @@ function* packets() {
   for (let i = 0; i < COUNT; i++) yield packetAt(i);
 }
 
-module.exports = { packets, TRACK };
+// =========================================================================================
+// the rest of the grid
+//
+// Same principle as the frames above: this is not a race, it is a sweep of the things that
+// break when reading a 36-slot array. So the grid is deliberately awkward —
+//
+//   * FEWER CARS THAN SLOTS. Six occupied out of thirty-six, so anything that reads or
+//     writes all 36 shows up as garbage in slots nobody is in.
+//   * SLOT ORDER IS NOT RACE ORDER. If the leader sat in slot 0, code that confused race
+//     position with slot index would still produce the right answer and pass.
+//   * THE PLAYER IS NOT SLOT 0. It sits at index 2, so `playerIndex` must be read rather
+//     than assumed.
+//   * THE PRE-GRID SPELLING IS INCLUDED. Before GRID_FORMS_AT every INFO row is the
+//     empty-slot sentinel — blank name, carId "none". Read as a driver, that writes a roster
+//     of ghosts and then reports the entire grid changing hands the moment a race starts.
+//   * ONE CAR TAKES DAMAGE PARTWAY, and lap times appear only after the first lap. Without
+//     something that changes mid-session, a format that writes state every tick and one that
+//     writes it on change produce identical files and the elision is asserted nowhere.
+// =========================================================================================
+
+const SLOTS = 36;
+const GRID = 6;
+const PLAYER_SLOT = 2;
+const GRID_FORMS_AT = 40;              // before this, every INFO row reads "none"
+const LAPPED_AT = 100;                 // when completed lap and sector times first appear
+const HURT_AT = 120;                   // when slot 4 loses health
+const RACE_ORDER = [4, 6, 1, 5, 2, 3]; // slot i runs Nth — deliberately not slot order
+
+const gridCar = (i) => ({
+  name: i === PLAYER_SLOT ? CAR.driver : '*BOT ' + (i * 7),
+  carName: i === PLAYER_SLOT ? CAR.name : 'Fixture Banger',
+  carId: i === PLAYER_SLOT ? CAR.id : 'fixture-car:ai_' + (1 + (i % 3)),
+  position: RACE_ORDER[i],
+  prog: 0.95 - RACE_ORDER[i] * 0.13,
+});
+
+/** The five participant arrays at step `i`, shaped for `encodeParticipants`. */
+function participantsAt(i) {
+  const formed = i >= GRID_FORMS_AT;
+  const info = [], mot = [], lb = [], tm = [], sec = [];
+  for (let s = 0; s < SLOTS; s++) {
+    const c = s < GRID ? gridCar(s) : null;
+
+    info[s] = c && formed
+      ? { playerName: c.name, carName: c.carName, carId: c.carId, participantIndex: s }
+      : { playerName: '', carName: '', carId: 'none', participantIndex: s };
+
+    if (!c) { mot[s] = {}; lb[s] = { status: 1 }; tm[s] = {}; sec[s] = {}; continue; }
+
+    const a = (c.prog + i * 0.0007) * Math.PI * 2;
+    mot[s] = {
+      orientation: {
+        positionX: 187.3 * Math.cos(a), positionY: 4 + s * 0.01, positionZ: 187.3 * Math.sin(a),
+        orientationQuaternionX: 0, orientationQuaternionY: Math.sin(a / 2),
+        orientationQuaternionZ: 0, orientationQuaternionW: Math.cos(a / 2),
+        extentsX: 180 + s, extentsY: 140 + s, extentsZ: 420 + s,
+      },
+      velocity: { velocityMagnitude: 30 + s },
+    };
+    lb[s] = {
+      status: 2, trackStatus: 0, lapCurrent: 1 + Math.floor(i / 100), position: c.position,
+      health: 100 - (i >= HURT_AT && s === 4 ? 35 : 0),
+      wrecks: 0, frags: 0, assists: 0, score: 10 * s, points: 0, deltaLeader: 1000 * c.position,
+    };
+    tm[s] = {
+      lapProgress: (c.prog + i * 0.0007) % 1,
+      lapTimeCurrent: i * TICK_MS,
+      lapTimeLast: i >= LAPPED_AT ? 61000 + s * 137 : 0,
+      lapTimeBest: i >= LAPPED_AT ? 60500 + s * 91 : 0,
+      lapBest: i >= LAPPED_AT ? 1 : 0,
+      deltaAhead: -500 * s, deltaBehind: 500 * s,
+    };
+    sec[s] = {
+      sectorTimeLastLap1: i >= LAPPED_AT ? 20000 + s * 31 : 0,
+      sectorTimeLastLap2: i >= LAPPED_AT ? 21000 + s * 29 : 0,
+      sectorTimeBest1: i >= LAPPED_AT ? 19900 + s * 23 : 0,
+      sectorTimeBest2: 0, sectorTimeBest3: 0,
+    };
+  }
+  return { info, mot, lb, tm, sec };
+}
+
+module.exports = {
+  packets, TRACK, CAR, COUNT,
+  participantsAt, SLOTS, GRID, PLAYER_SLOT, GRID_FORMS_AT, LAPPED_AT, HURT_AT, RACE_ORDER,
+};
